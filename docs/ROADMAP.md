@@ -16,6 +16,13 @@ Teaching first, then a regression harness, with enough rigour that the numbers c
   * Claude was not supported and the OpenAI default model was hard-coded: all three providers, models listed live;
   * pins: fork `13121b6`, add-on `d9bbf91` (2.6.4), X_ITE 16.7.0 everywhere, `bpy` 5.2.3.
 
+## 00 Basic MCP
+
+* Self-contained: install (uv or pip), start on loopback, a token-checking proxy, cloudflared or ngrok, then a smoke test of the protocol, every tool (stateful ones as chains), validator verdicts on 2 good and 16 broken scenes, concurrent load, 0.5–20 MB documents and hostile input, and a JSON report.
+* `SERVER = "consortium"` runs upstream with `mcp<2` pinned. On upstream `main` (Oct 2026) two defects slip through: a ROUTE before its DEF, and PBR outside the declared profile.
+* Found while testing: in the fork, `render_current_scene` returns a blank frame for a scene that `render_image` draws when given the same XML (from `get_scene`). The smoke test cross-checks this automatically.
+* The fork's render tools load X_ITE from jsdelivr. `LOCAL_XITE` serves it from the VM instead; the local server needs CORS headers because X_ITE fetches its CSS and WebAssembly cross-origin.
+
 ## Phase 2: 02 Lab (L4 / G4)
 
 * One Blender worker (round trip, render, stress ladder) with GPU probing OptiX → CUDA → CPU, a GPU render queue, VRAM sampling, temp-dir cleanup, and the importer's own error messages instead of "import/export error: ?".

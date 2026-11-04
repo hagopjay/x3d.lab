@@ -4,11 +4,12 @@ Colab notebooks and a shared toolkit for authoring and testing [X3D](https://www
 
 | Notebook | For | Runtime | Status |
 |---|---|---|---|
+| [00 Basic MCP](notebooks/00_Basic_MCP.ipynb) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/jasonthurman-sys/x3d.lab/blob/main/notebooks/00_Basic_MCP.ipynb) | the shortest path: install an X3D MCP server (the fork, or upstream with one word), expose it through Cloudflare or ngrok behind a token, and smoke-test it thoroughly. No package, all code in the cells | CPU | ready |
 | [01 Quickstart](notebooks/01_Quickstart.ipynb) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/jasonthurman-sys/x3d.lab/blob/main/notebooks/01_Quickstart.ipynb) | newcomers: hosting, keys, a first scene, MCP tools, connecting Claude Code, Break it | CPU | ready |
 | 02 Lab | intermediate: Blender round trip and GPU renders, a configurable stress test, DevTools profiling, run cards, provenance | L4 or G4 | next |
 | 03 Stress & Research | advanced: grammar fuzzing, cross-validator and cross-renderer comparison, scale on a G4, regression baselines | G4 | planned |
 
-All three notebooks import the same `x3dlab` package from this repo, so a fix lands once.
+01–03 import the same `x3dlab` package (00 is self-contained on purpose) from this repo, so a fix lands once.
 
 ## Which x3d_mcp
 
