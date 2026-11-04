@@ -1,0 +1,28 @@
+# Every number a notebook reports is tied to these pins. Each run card records them,
+# so a result can always be traced to the exact code that produced it.
+# Update a pin deliberately (one PR per change) and rerun the regression preset.
+
+[x3d_mcp]
+# The validator and MCP server. The fork is ahead of upstream and pins mcp<2.
+repo = "hagopjay/x3d_mcp"
+ref = "13121b68e6d9c8ffe12cb8bc9996c1bf01a90d67"     # 2026-11-03
+upstream = "Web3DConsortium/x3d_mcp"                 # linked, not run: its pyproject allows mcp 2.x,
+                                                     # where `mcp.server.fastmcp` no longer exists
+
+[x3d_blender_io]
+# Blender add-on (used from the 02 Lab notebook on).
+repo = "hagopjay/x3d-blender-io"
+ref = "d9bbf916f5803bb97fa485442697b141d63aa2ff"     # 2026-10-26, add-on 2.6.4
+
+[x_ite]
+# The browser the dashboard loads. One version everywhere, recorded per run.
+version = "16.7.0"
+cdn = "https://cdn.jsdelivr.net/npm/x_ite@{version}/dist/x_ite.min.js"
+
+[cloudflared]
+version = "2026.10.7"
+url = "https://github.com/cloudflare/cloudflared/releases/download/{version}/cloudflared-linux-amd64"
+
+[python]
+mcp = "mcp>=1.29,<2"
+bpy = "bpy==5.2.3"

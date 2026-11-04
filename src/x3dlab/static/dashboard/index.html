@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<title>x3d.lab</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath fill='%2339b385' d='M16 2 3 9v14l13 7 13-7V9z'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="static/dashboard/app.css">
+<link rel="stylesheet" href="{{XITE_CSS}}">
+<script src="{{XITE_SRC}}"></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true"><path fill="#39b385" d="M16 2 3 9v14l13 7 13-7V9z"/><path fill="#1f6f52" d="M16 16 3 9v14l13 7z"/></svg>
+    <span>x3d.lab</span><span class="tag">Quickstart</span></div>
+  <div class="pills" id="pills"><span class="pill">connecting…</span></div>
+  <nav class="links"><a id="copilot-link" href="copilot/" target="_blank" hidden>Copilot demo ↗</a>
+    <button id="devtools-help" class="ghost" title="What this page sends to Chrome DevTools">DevTools</button></nav>
+</header>
+
+<main class="grid">
+  <section class="card" id="make">
+    <h2>Make a scene</h2>
+    <textarea id="prompt" rows="3" maxlength="4000">A small lighthouse on a rocky island at dusk, with a slowly turning lamp and calm blue water.</textarea>
+    <div class="row">
+      <label>Model <select id="provider"></select></label>
+      <label><select id="model"></select></label>
+    </div>
+    <div class="row">
+      <label>Mode <select id="mode"><option value="simple">simple</option><option value="agent">agent (uses MCP tools)</option></select></label>
+      <label>Repairs <select id="rounds"><option>0</option><option>1</option><option selected>2</option><option>3</option></select></label>
+      <label>X3D <select id="version"><option>4.0</option><option>4.1</option></select></label>
+      <button id="run" class="primary">Run</button>
+    </div>
+    <ol id="steps" class="steps"></ol>
+
+    <h2>Break it</h2>
+    <p class="muted">Inject one defect into the sample scene. Guess which check catches it, then press Inject.</p>
+    <div class="row">
+      <select id="defect"></select>
+      <select id="guess"><option value="">your guess…</option><option value="xml">XML parser</option><option value="xsd">XSD schema</option>
+        <option value="semantic">Semantic check</option><option value="nobody">Nobody</option></select>
+      <button id="inject">Inject</button>
+    </div>
+    <div id="breakit-out" class="muted"></div>
+
+    <h2>Paste &amp; validate</h2>
+    <textarea id="paste" rows="4" placeholder="Paste an X3D (XML) document"></textarea>
+    <div class="row"><button id="validate">Validate</button><button id="view-paste" class="ghost">View it</button></div>
+  </section>
+
+  <section class="card" id="viewer-card">
+    <x3d-canvas id="view" contentScale="auto" xrSessionMode="NONE"></x3d-canvas>
+    <div class="row between"><span id="view-info" class="muted">X_ITE is loading…</span>
+      <span><a id="dl" href="#" hidden>scene.x3d</a></span></div>
+    <div id="verdict"></div>
+  </section>
+
+  <section class="card wide" id="log-card">
+    <div class="row between">
+      <h2>Live events</h2>
+      <div class="row">
+        <select id="log-level"><option>DEBUG</option><option selected>INFO</option><option>WARN</option><option>ERROR</option></select>
+        <select id="log-density"><option>compact</option><option selected>rich</option><option>firehose</option></select>
+        <input id="log-filter" placeholder="filter (src or text)" size="16">
+        <label class="check"><input type="checkbox" id="log-console" checked> console</label>
+        <button id="log-pause" class="ghost">pause</button><button id="log-clear" class="ghost">clear</button>
+      </div>
+    </div>
+    <div id="log" class="log" aria-live="polite"></div>
+    <div class="muted small" id="footer"></div>
+  </section>
+</main>
+
+<dialog id="devtools-dialog">
+  <h3>What this page sends to Chrome DevTools</h3>
+  <ul>
+    <li><b>Performance</b>: record a trace. Server work (validator, MCP calls, model calls) appears as custom tracks in the
+      <i>x3d.lab</i> group next to X_ITE's frames. Turn on <i>Capture settings › Show custom tracks</i> if you do not see them.</li>
+    <li><b>Console</b>: one collapsed group per finished scene with a table of issues; styled lines per event (level follows the
+      selector on this page). Type <code>x3dlab.help()</code>.</li>
+    <li><b>Network</b>: <code>events</code> is the live stream (EventStream tab). Every API call has a <i>Server-Timing</i> header
+      (Timing tab): gateway, validator and MCP time.</li>
+    <li><b>Custom formatters</b>: enable <i>Settings › Console › Custom formatters</i> and validator issues print as compact badges.</li>
+    <li><b>Copilot tab</b>: <code>window.__x3dcopilot</code> exposes its viewer, editor and validator.</li>
+  </ul>
+  <form method="dialog"><button>Close</button></form>
+</dialog>
+
+<script src="static/dashboard/app.js"></script>
+</body>
+</html>

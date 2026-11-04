@@ -1,0 +1,22 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install -e ".[server,notebook,dev]"
+      - name: Notebooks are up to date with notebooks/src
+        run: python tools/build_notebooks.py --check
+      - name: Tests (clones the pinned x3d_mcp fork)
+        run: pytest -q
