@@ -16,7 +16,8 @@ import nbformat
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "notebooks" / "src"
 OUT = ROOT / "notebooks"
-NAMES = {"00_basic_mcp.py": ("00_Basic_MCP.ipynb", None), "01_quickstart.py": ("01_Quickstart.ipynb", None)}   # name -> (output, accelerator)
+NAMES = {"00_basic_mcp.py": ("00_Basic_MCP.ipynb", None), "01_quickstart.py": ("01_Quickstart.ipynb", None),
+         "02_lab.py": ("02_Lab.ipynb", "GPU")}   # name -> (output, accelerator)
 
 
 def parse(text: str) -> list:

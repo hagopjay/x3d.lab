@@ -125,7 +125,7 @@ class Gate:
 
 # ---------------------------------------------------------------------- request bodies
 class JobRequest(BaseModel):
-    kind: Literal["scene", "breakit", "validate"]
+    kind: Literal["scene", "breakit", "validate", "stress"]
     params: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -211,7 +211,8 @@ def create_app(lab) -> FastAPI:
         return {"mcp": mcp, "pins": pins.summary(), "runtime": lab.runtime_info, "uptime_s": round(time.time() - lab.started),
                 "llm": keys.public_status(), "copilot": bool(lab.copilot_dir), "expose_mcp": lab.expose_mcp,
                 "hosting": lab.hosting_info(), "jobs": {"llm_runs": lab.jobs.llm_jobs_started, "llm_limit": lab.jobs.max_llm_jobs},
-                "breakit": [{"id": d.id, "title": d.title} for d in breakit.CATALOG]}
+                "breakit": [{"id": d.id, "title": d.title} for d in breakit.CATALOG],
+                "blender": ({"version": lab.blender.version, "best": lab.blender.best_backend} if getattr(lab, "blender", None) else None)}
 
     @app.get("/api/llm")
     async def llm_status():

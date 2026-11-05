@@ -23,12 +23,19 @@ Teaching first, then a regression harness, with enough rigour that the numbers c
 * Found while testing: in the fork, `render_current_scene` returns a blank frame for a scene that `render_image` draws when given the same XML (from `get_scene`). The smoke test cross-checks this automatically.
 * The fork's render tools load X_ITE from jsdelivr. `LOCAL_XITE` serves it from the VM instead; the local server needs CORS headers because X_ITE fetches its CSS and WebAssembly cross-origin.
 
-## Phase 2: 02 Lab (L4 / G4)
+## Phase 2: 02 Lab (this commit)
 
-* One Blender worker (round trip, render, stress ladder) with GPU probing OptiX → CUDA → CPU, a GPU render queue, VRAM sampling, temp-dir cleanup, and the importer's own error messages instead of "import/export error: ?".
-* The stress test as a control panel: presets (smoke, heavy, 50k, custom) scaled to the detected GPU; every tier on/off with its own settings; a JSON config with a seed; a run card per run.
-* Fidelity beyond counts (bounding boxes, vertex hashes, materials, transforms) and multi-generation drift; the light-energy drift shown as a strip until a decision is made.
-* Optional provenance stamping on each step, checked after each Blender round trip (private module, loaded with your token).
+* `blender.py` + `blender_worker.py`: the `bpy` 5.2.3 wheel when Python is 3.13, else the Blender 5.2 LTS tarball; the add-on at its pin; one worker for probe, round trip and render. Cycles backend probing (OptiX › CUDA › HIP › oneAPI › CPU, counting only real GPU devices), a GPU render semaphore, `nvidia-smi` sampling (utilisation, VRAM, power) with per-render peaks, temp-dir cleanup, and each task's own Blender output attached to it with a one-line `reason` (a broken file now says `SAXParseException: …:1:12: unclosed token`, not "import/export error: ?").
+* `scenegen.py`: six deterministic families (primitives, meshes, lights, materials, hierarchy, animated), all valid in x3d_mcp.
+* `fidelity.py`: snapshot comparison that survives renaming (match by name, then by type and position), compares light *direction* rather than quaternions, treats seam splits as no loss (unique vertex positions), and detects lost instancing.
+* `stress.py`: RunConfig (JSON, seed, run name), presets scaled to the GPU class, tiers validate / roundtrip / drift / render / load, run card + HTML report, `compare_cards`.
+* Dashboard: a Lab run panel (start a run, tier counts, findings, render gallery, GPU graph); Blender spans on the DevTools timeline.
+* Measured on the pinned add-on (d9bbf91), CPU, `standard` preset (90 checks, 75 s):
+  * every Blender export validates in x3d_mcp;
+  * the light-energy round-trip drift is fixed on the 4.0 / 4.1 paths (import multiplies by the 1.75 export divides by);
+  * the X3D 3.3 path clamps intensity to 1.0: a light at 2.5 keeps 40 % of its energy, permanently, after one round trip;
+  * the 4.0 / 4.1 paths lose DEF/USE instancing: 2 shared meshes come back as N separate copies (3.3 keeps them shared).
+* Deferred: optional provenance stamping (private module) moves to Phase 3 with the other private integrations.
 
 ## Phase 3: 03 Stress & Research
 

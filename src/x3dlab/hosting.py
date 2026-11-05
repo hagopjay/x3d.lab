@@ -60,6 +60,8 @@ class Lab:
     client: X3DMCP | None = None
     gateway: object = None
     panel: object = None
+    blender: object = None
+    runs: list = field(default_factory=list)
 
     # ------------------------------------------------------------------ addresses
     @property
@@ -119,6 +121,40 @@ class Lab:
         url = self.dashboard_url() + "copilot/"
         bus.info("Copilot Validator Demo mounted at …/copilot/", src="copilot")
         return url
+
+    def setup_blender(self, prefer: str = "auto"):
+        """Install/probe Blender and attach it, so stress runs can start from the dashboard too."""
+        from . import blender
+        self.blender = blender.setup(prefer)
+        return self.blender
+
+    def render(self, xml_or_path: str, samples: int = 128, resolution=(1280, 720), backend: str | None = None,
+               denoise: bool = True, camera: str = "viewpoint") -> dict:
+        """Render a scene (XML text or a file path) with Cycles. Returns the worker result plus `url` for the dashboard."""
+        import uuid as _uuid
+        if self.blender is None:
+            self.setup_blender()
+        rid = _uuid.uuid4().hex[:10]
+        d = runtime.sub("out", rid)
+        src = Path(xml_or_path) if not str(xml_or_path).lstrip().startswith("<") else None
+        if src is None:
+            src = d / "scene.x3d"
+            src.write_text(xml_or_path, encoding="utf-8")
+        r = self.blender.render(str(src), str(d / "render.png"), backend=backend, samples=samples, resolution=resolution,
+                                denoise=denoise, camera=camera, job=rid)
+        res = dict(r.get("result") or {}, ok=r["ok"], log=r["log"], url="out/%s/render.png" % rid, path=str(d / "render.png"))
+        if r["ok"]:
+            bus.emit("render ready", src="lab", kind="render", job=rid,
+                     data={"url": res["url"], "case": "your scene · %s · %d spp" % (res.get("backend"), samples), "seconds": res.get("seconds", 0)})
+        return res
+
+    def stress(self, cfg=None, preset: str = "standard"):
+        """Run the 02 Lab stress test (blocking). Rows stream to the panel and the dashboard."""
+        from . import stress
+        cfg = cfg or stress.RunConfig.preset_for(preset)
+        run = stress.run(cfg, self, self.blender)
+        self.runs.append(run)
+        return run
 
     def status(self) -> dict:
         return {"processes": procs.status(), "routes": self.urls, "jobs": [j.public() for j in self.jobs.recent(5)],
@@ -203,6 +239,15 @@ def _register_jobs(lab: Lab) -> None:
     def validate_job(job):
         return lab.client.run(lab.client.verdict(str(job.params.get("xml") or ""), job=job.id)).to_dict()
 
+    def stress_job(job):
+        from . import stress
+        preset = str(job.params.get("preset") or "standard")
+        if preset not in stress.PRESETS:
+            raise ValueError("unknown preset %r" % preset)
+        run = lab.stress(stress.RunConfig.preset_for(preset))
+        return {"run": run.id, "name": run.name, "summary": run.summary()}
+
+    lab.jobs.register("stress", stress_job)
     lab.jobs.register("scene", scene_job, uses_llm)
     lab.jobs.register("breakit", breakit_job)
     lab.jobs.register("validate", validate_job)

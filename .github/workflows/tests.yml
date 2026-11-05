@@ -20,3 +20,19 @@ jobs:
         run: python tools/build_notebooks.py --check
       - name: Tests (clones the pinned x3d_mcp fork)
         run: pytest -q
+
+  blender:
+    # The 02 Lab tests that drive real Blender: the bpy wheel exists only for Python 3.13 (about 400 MB).
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install
+        run: |
+          sudo apt-get -qq install -y libxi6 libxxf86vm1 libxfixes3 libxrender1 libgl1 libxkbcommon0 libsm6 libegl1
+          pip install -e ".[server,notebook,dev]" "bpy==5.2.3"
+      - name: Blender tests
+        run: pytest -q tests/test_lab.py tests/test_fidelity.py

@@ -13,6 +13,7 @@
   const LEVELS = { DEBUG: 10, INFO: 20, WARN: 30, ERROR: 40 };
   const ROUTE = /trycloudflare\.com|ngrok/.test(location.host) ? "tunnel" : /googleusercontent|colab/.test(location.host) ? "colab" : "local";
   const COLORS = { Validator: "primary", MCP: "primary-light", LLM: "secondary", Blender: "tertiary", X_ITE: "tertiary-light", Gateway: "secondary-light", Lab: "primary-dark" };
+  const lab = { run: null, tiers: {}, gpu: [], rows: [] };
   const state = { health: null, browser: null, events: [], paused: false, lastSeq: 0, job: null, loaf: 0, measures: 0, sceneXml: null };
 
   // ------------------------------------------------------------------ helpers
@@ -65,6 +66,8 @@
       add((h.runtime.colab ? "Colab " : "") + (h.runtime.gpu_kind === "CPU" ? "CPU only" : "GPU " + h.runtime.gpu_kind));
       add("model runs " + h.jobs.llm_runs + "/" + h.jobs.llm_limit);
       $("#copilot-link").hidden = !h.copilot;
+      if (h.runtime.gpu_kind === "CPU" && !lab.gpu.length) $("#gpu-now").textContent = "no GPU on this runtime";
+      if (h.blender) { $("#lab-card").hidden = false; add("Blender " + h.blender.version + " · " + h.blender.best, "ok"); }
       fillProviders(h.llm);
       if (!$("#defect").options.length) {
         for (const d of h.breakit) $("#defect").appendChild(el("option", { value: d.id }, d.title));
@@ -165,6 +168,56 @@
     if (ev.kind === "step" && ev.job === state.job) addStep(ev.msg, d, ev);
     if (ev.kind === "scene") onScene(ev);
     if (ev.kind === "job_end" && ev.job === state.job) $("#run").disabled = false;
+    if (ev.kind && ev.kind.startsWith("stress") || ev.kind === "render" || (ev.kind === "metric" && ev.src === "gpu")) onLab(ev);
+  }
+
+  // ------------------------------------------------------------------ Lab run (02 Lab)
+  function onLab(ev) {
+    const d = ev.data || {};
+    $("#lab-card").hidden = false;
+    if (ev.kind === "stress_start") {
+      Object.assign(lab, { run: d.run, tiers: {}, rows: [] });
+      $("#lab-name").textContent = d.name + " · " + d.tiers.join(", ");
+      $("#lab-findings").replaceChildren(); $("#lab-gallery").replaceChildren(); $("#lab-report").hidden = true;
+      $("#lab-start").disabled = true;
+    } else if (ev.kind === "stress") {
+      if (lab.run && d.run !== lab.run) return;
+      const t = lab.tiers[d.tier] = lab.tiers[d.tier] || { PASS: 0, WARN: 0, FAIL: 0, SKIP: 0 };
+      t[d.status]++; lab.rows.push(d); drawTiers();
+      if (d.status !== "PASS") $("#lab-findings").appendChild(el("li", { class: d.status }, d.tier + " · " + d.case + (d.detail ? " — " + d.detail : "")));
+    } else if (ev.kind === "render") {
+      const f = el("figure"); const img = el("img", { src: d.url, loading: "lazy", alt: d.case });
+      f.append(img, el("figcaption", {}, d.case + " · " + d.seconds.toFixed(2) + " s"));
+      $("#lab-gallery").prepend(f);
+    } else if (ev.kind === "stress_end") {
+      $("#lab-start").disabled = false;
+      $("#lab-report").href = d.report; $("#lab-report").hidden = false;
+      if (consoleOn()) {
+        console.groupCollapsed("%cstress run " + ($("#lab-name").textContent || d.run), "font-weight:600");
+        console.table(lab.rows.map(({ tier, case: c, status, ms, detail }) => ({ tier, case: c, status, ms, detail })));
+        console.log("summary", d.summary, "run card:", new URL(d.card, location.href).href);
+        console.groupEnd();
+      }
+    } else if (ev.kind === "metric") {
+      lab.gpu.push(d); if (lab.gpu.length > 300) lab.gpu.shift();
+      $("#gpu-now").textContent = d.util + "% · " + Math.round(d.mem_mb) + " / " + Math.round(d.mem_total_mb) + " MB" + (d.power_w ? " · " + Math.round(d.power_w) + " W" : "");
+      drawSpark();
+    }
+  }
+  function drawTiers() {
+    const t = $("#lab-tiers"); t.replaceChildren();
+    t.appendChild(el("tr")).append(el("th", {}, "tier"), el("th", {}, "pass"), el("th", {}, "warn"), el("th", {}, "fail"));
+    for (const [name, c] of Object.entries(lab.tiers)) {
+      const tr = el("tr"); tr.append(el("td", {}, name), el("td", { class: "PASS" }, c.PASS), el("td", { class: "WARN" }, c.WARN), el("td", { class: "FAIL" }, c.FAIL));
+      t.appendChild(tr);
+    }
+  }
+  function drawSpark() {
+    const svg = $("#gpu-spark"), n = lab.gpu.length;
+    if (n < 2) return;
+    const line = (key, max) => lab.gpu.map((g, i) => (i * 300 / (n - 1)).toFixed(1) + "," + (58 - 56 * (g[key] / max)).toFixed(1)).join(" ");
+    svg.innerHTML = '<polyline fill="none" stroke="#39b385" stroke-width="1.5" points="' + line("util", 100) + '"/>' +
+      '<polyline fill="none" stroke="#e8b45a" stroke-width="1.5" points="' + line("mem_mb", lab.gpu[n - 1].mem_total_mb || 1) + '"/>';
   }
   function toTimeline(ev) {
     const sp = ev.span;
@@ -334,6 +387,10 @@
   $("#log-pause").addEventListener("click", (e) => { state.paused = !state.paused; e.target.textContent = state.paused ? "resume" : "pause"; });
   $("#log-clear").addEventListener("click", () => $("#log").replaceChildren());
   $("#devtools-help").addEventListener("click", () => $("#devtools-dialog").showModal());
+  $("#lab-start").addEventListener("click", async () => {
+    try { await api("api/jobs", { method: "POST", body: JSON.stringify({ kind: "stress", params: { preset: $("#lab-preset").value } }) }); }
+    catch (e) { $("#lab-findings").appendChild(el("li", { class: "FAIL" }, "could not start: " + e.message)); }
+  });
   console.log("%cx3d.lab%c dashboard · type x3dlab.help() · route %s", "background:#1f7a5c;color:#fff;padding:2px 6px;border-radius:3px;font-weight:600", "", ROUTE);
   initViewer();
   refreshHealth();
