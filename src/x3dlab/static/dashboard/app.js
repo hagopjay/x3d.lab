@@ -169,6 +169,7 @@
     if (ev.kind === "scene") onScene(ev);
     if (ev.kind === "job_end" && ev.job === state.job) $("#run").disabled = false;
     if (ev.kind && ev.kind.startsWith("stress") || ev.kind === "render" || (ev.kind === "metric" && ev.src === "gpu")) onLab(ev);
+    if (ev.kind === "fuzz_case" || ev.kind === "fuzz_end" || ev.kind === "agent_step") onResearch(ev);
   }
 
   // ------------------------------------------------------------------ Lab run (02 Lab)
@@ -179,6 +180,7 @@
       Object.assign(lab, { run: d.run, tiers: {}, rows: [] });
       $("#lab-name").textContent = d.name + " · " + d.tiers.join(", ");
       $("#lab-findings").replaceChildren(); $("#lab-gallery").replaceChildren(); $("#lab-report").hidden = true;
+      $("#lab-fuzz").hidden = true; $("#lab-progress").textContent = ""; Object.assign(fuzz, { n: 0, of: 0, flags: 0 });
       $("#lab-start").disabled = true;
     } else if (ev.kind === "stress") {
       if (lab.run && d.run !== lab.run) return;
@@ -192,6 +194,7 @@
     } else if (ev.kind === "stress_end") {
       $("#lab-start").disabled = false;
       $("#lab-report").href = d.report; $("#lab-report").hidden = false;
+      if (lab.tiers.fuzz) { $("#lab-fuzz").href = d.report.replace(/report\.html$/, "fuzz/report.html"); $("#lab-fuzz").hidden = false; }
       if (consoleOn()) {
         console.groupCollapsed("%cstress run " + ($("#lab-name").textContent || d.run), "font-weight:600");
         console.table(lab.rows.map(({ tier, case: c, status, ms, detail }) => ({ tier, case: c, status, ms, detail })));
@@ -202,6 +205,22 @@
       lab.gpu.push(d); if (lab.gpu.length > 300) lab.gpu.shift();
       $("#gpu-now").textContent = d.util + "% · " + Math.round(d.mem_mb) + " / " + Math.round(d.mem_total_mb) + " MB" + (d.power_w ? " · " + Math.round(d.power_w) + " W" : "");
       drawSpark();
+    }
+  }
+  // ------------------------------------------------------------------ 03 research: fuzz progress, agent steps
+  const fuzz = { n: 0, of: 0, flags: 0, ops: {} };
+  function onResearch(ev) {
+    const d = ev.data || {};
+    if (ev.kind === "fuzz_case") {
+      $("#lab-card").hidden = false;
+      fuzz.n = d.done; fuzz.of = d.of; if (d.flags && d.flags.length) fuzz.flags++;
+      $("#lab-progress").textContent = "fuzz " + fuzz.n + " / " + fuzz.of + " cases · " + fuzz.flags + " flagged";
+      if (consoleOn() && d.flags && d.flags.length) console.debug("%cfuzz " + d.case + " " + d.op, "color:#b26a00", d.verdicts, "flags:", d.flags);
+    } else if (ev.kind === "fuzz_end") {
+      $("#lab-progress").textContent = ev.msg;
+      if (consoleOn() && d.confusion) { console.groupCollapsed("%cfuzz confusion", "font-weight:600"); console.table(d.confusion); console.groupEnd(); }
+    } else if (ev.kind === "agent_step" && consoleOn()) {
+      console.debug("%cagent " + d.server + " " + d.tool, "color:" + (d.ok ? "#1a5fb4" : "#c62828"), d.args, d.preview);
     }
   }
   function drawTiers() {

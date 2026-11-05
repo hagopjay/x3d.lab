@@ -97,6 +97,15 @@ def x3d_mcp(ref: str | None = None) -> Path:
     return dest / "src"
 
 
+def upstream(ref: str | None = None) -> Path:
+    """The Web3D Consortium's x3d_mcp at its pinned commit (a second validator for the 03 notebook). Returns src/."""
+    if os.environ.get("X3DLAB_UPSTREAM_DIR"):
+        return Path(os.environ["X3DLAB_UPSTREAM_DIR"]) / "src"
+    dest = runtime.sub("repos") / "x3d_mcp_upstream"
+    clone(pins.get("x3d_mcp", "upstream"), ref or pins.get("x3d_mcp", "upstream_ref"), dest)
+    return dest / "src"
+
+
 def server_ready() -> Path:
     pip(missing_server_deps())
     return x3d_mcp()

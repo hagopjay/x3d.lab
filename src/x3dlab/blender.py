@@ -198,10 +198,10 @@ class Blender:
         return self.info.get("best", "CPU") if self.info else "CPU"
 
     def render(self, src: str, out_png: str, backend: str | None = None, samples: int = 64, resolution=(960, 540),
-               denoise: bool = True, camera: str = "viewpoint", job: str | None = None) -> dict:
+               denoise: bool = True, camera: str = "viewpoint", job: str | None = None, film_transparent: bool = False) -> dict:
         backend = backend or self.best_backend
         task = {"kind": "render", "src": str(src), "out_png": str(out_png), "backend": backend, "samples": samples,
-                "resolution": list(resolution), "denoise": denoise, "camera": camera}
+                "resolution": list(resolution), "denoise": denoise, "camera": camera, "film_transparent": film_transparent}
         if backend != "CPU":
             with self.gpu:
                 self.sampler.start()
@@ -212,6 +212,9 @@ class Blender:
         else:
             r = self.run([task], job=job, label="render")[0]
         return r
+
+    def import_(self, src: str, job: str | None = None) -> dict:
+        return self.run([{"kind": "import", "src": str(src)}], job=job, label="import")[0]
 
     def roundtrip(self, src: str, version: str = "X3D40", generations: int = 1, out_prefix: str | None = None,
                   job: str | None = None) -> dict:

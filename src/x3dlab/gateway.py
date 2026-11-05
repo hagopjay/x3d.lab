@@ -179,6 +179,13 @@ def create_app(lab) -> FastAPI:
         return HTMLResponse(html.replace("{{XITE_SRC}}", lab.xite_src).replace("{{XITE_CSS}}", lab.xite_css),
                             headers={"cache-control": "no-store"})
 
+    @app.get("/view", response_class=HTMLResponse)
+    async def viewer():
+        """One scene in X_ITE: /k/<key>/view?src=out/<job>/<file>.x3d (the two-MCP agent's Chrome opens this)."""
+        html = (STATIC / "viewer.html").read_text(encoding="utf-8")
+        return HTMLResponse(html.replace("{{XITE_SRC}}", lab.xite_src).replace("{{XITE_CSS}}", lab.xite_css),
+                            headers={"cache-control": "no-store"})
+
     @app.get("/static/{path:path}")
     async def static(path: str):
         p = (STATIC / path).resolve()
@@ -309,9 +316,10 @@ def create_app(lab) -> FastAPI:
         return StreamingResponse(gen(), media_type="text/event-stream",
                                  headers={"cache-control": "no-cache, no-transform", "x-accel-buffering": "no"})
 
-    @app.get("/out/{job_id}/{name}")
+    @app.get("/out/{job_id}/{name:path}")
     async def out_file(job_id: str, name: str):
-        if not (_SAFE_ID.match(job_id) and _SAFE_NAME.match(name)) or ".." in name:
+        parts = name.split("/")
+        if not _SAFE_ID.match(job_id) or len(parts) > 3 or any(not _SAFE_NAME.match(x) or x in (".", "..") for x in parts):
             return JSONResponse({"error": "not found"}, status_code=404)
         p = (lab.out_dir / job_id / name).resolve()
         if lab.out_dir.resolve() not in p.parents or not p.is_file():

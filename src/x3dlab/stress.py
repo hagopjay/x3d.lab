@@ -64,6 +64,17 @@ PRESETS = {
                              "denoise": True, "compare_cpu": True},
                   "load": {"on": True, "sessions": 48, "calls": 20}}},
 }
+# The 03 notebook's presets. Research tiers are configured in research.DEFAULTS; a preset overrides what it names.
+PRESETS["research"] = {
+    "families": ["primitives", "lights", "hierarchy"], "sizes": [4],
+    "tiers": {"validate": {"on": True}, "fuzz": {"on": True}, "matrix": {"on": True}, "crossrender": {"on": True},
+              "scale": {"on": True}, "traces": {"on": True}}}
+PRESETS["ci"] = {                        # deterministic, CPU-only, no browser or Blender required (they join when present)
+    "families": ["primitives", "lights", "hierarchy", "materials"], "sizes": [4],
+    "tiers": {"validate": {"on": True},
+              "matrix": {"on": True, "oracles": ["fork", "lxml-xsd", "consortium"]},
+              "fuzz": {"on": True, "n": 80, "seed": 2026, "oracles": ["fork", "lxml-xsd", "consortium"], "minimize": False,
+                       "concurrency": 4}}}
 # How far each GPU class stretches the render ladders (CPU-only runtimes are cut down hard).
 GPU_SCALE = {"CPU": 0.125, "T4": 0.5, "L4": 1.0, "A100": 1.5, "H100": 2.0, "G4": 2.0, "other": 1.0}
 
@@ -142,6 +153,7 @@ class StressRun:
         self.started = time.time()
         self.ended: float | None = None
         self.blender: dict = {}
+        self.research: dict = {}         # fuzz / matrix / crossrender / scale / traces results (03 notebook)
         self.card_path: Path | None = None
 
     def add(self, row: Row) -> Row:
@@ -336,11 +348,15 @@ def tier_load(run: StressRun, lab) -> None:
                 {"calls_per_s": round(total / wall, 1), "p50": round(q[49], 1), "p95": round(q[94], 1), "p99": round(q[98], 1), "errors": len(errors)}))
 
 
-TIERS = ["validate", "roundtrip", "drift", "render", "load"]
+TIERS = ["validate", "roundtrip", "drift", "render", "load", "matrix", "fuzz", "scale", "crossrender", "traces"]
+NEEDS_BLENDER = ("roundtrip", "drift", "render")
 
 
-def run(cfg: RunConfig, lab, bl=None) -> StressRun:
-    """Run every enabled tier. Needs `lab` (x3dlab.up()) and, for Blender tiers, `bl` (blender.setup())."""
+def run(cfg: RunConfig, lab, bl=None, hb=None) -> StressRun:
+    """Run every enabled tier. Needs `lab` (x3dlab.up()); Blender tiers need `bl` (blender.setup()); the browser
+    tiers use `hb` or lab.browser (lab.start_browser())."""
+    from . import research
+    hb = hb or getattr(lab, "browser", None)
     sr = StressRun(cfg)
     sr.blender = dict(bl.info) if bl else {}
     bus.emit("stress run %s started (%s preset, seed %d)" % (sr.name, cfg.preset, cfg.seed), src="stress", kind="stress_start", job=sr.id,
@@ -349,7 +365,7 @@ def run(cfg: RunConfig, lab, bl=None) -> StressRun:
         tc = cfg.tiers.get(tier, {})
         if not tc.get("on"):
             continue
-        if tier in ("roundtrip", "drift", "render") and bl is None:
+        if tier in NEEDS_BLENDER and bl is None:
             sr.add(Row(tier, "(tier)", "SKIP", None, "Blender is not set up: run the Blender cell first"))
             continue
         bus.emit("tier %s" % tier, src="stress", kind="stress_tier", job=sr.id, data={"tier": tier, "run": sr.id})
@@ -365,6 +381,8 @@ def run(cfg: RunConfig, lab, bl=None) -> StressRun:
                 tier_render(sr, lab, bl)
             elif tier == "load":
                 tier_load(sr, lab)
+            elif tier in research.TIERS:
+                research.TIERS[tier](sr, lab, bl, hb)
         except Exception as exc:
             sr.add(Row(tier, "(tier crashed)", "FAIL", None, "%s: %s" % (type(exc).__name__, str(exc)[:300])))
         bus.emit("tier %s done" % tier, src="stress", kind="span", job=sr.id,
@@ -382,7 +400,8 @@ def run(cfg: RunConfig, lab, bl=None) -> StressRun:
 def write_card(sr: StressRun, lab=None) -> Path:
     card = {"id": sr.id, "name": sr.name, "started": sr.started, "ended": sr.ended, "seconds": round((sr.ended or time.time()) - sr.started, 1),
             "config": asdict(sr.cfg), "pins": pins.summary(), "runtime": runtime.detect().as_dict(), "blender": sr.blender,
-            "summary": sr.summary(), "rows": [asdict(r) for r in sr.rows], "drift": sr.drift, "renders": sr.renders}
+            "summary": sr.summary(), "rows": [asdict(r) for r in sr.rows], "drift": sr.drift, "renders": sr.renders,
+            "research": sr.research}
     sr.card_path = sr.dir / "run_card.json"
     sr.card_path.write_text(json.dumps(card, indent=1, default=str), encoding="utf-8")
     (sr.dir / "report.html").write_text(report_html(card), encoding="utf-8")

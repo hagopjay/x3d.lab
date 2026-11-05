@@ -6,7 +6,7 @@
     result = lab.scene("a lighthouse on a rock at dusk")
 """
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"
 
 from . import keys, llm, pins, runtime, scenes  # noqa: F401
 from .events import bus  # noqa: F401

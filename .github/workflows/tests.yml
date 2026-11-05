@@ -8,18 +8,47 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install
+        run: |
+          pip install -e ".[server,notebook,research,dev]"
+          python -m playwright install --with-deps chromium
+          # the pinned X_ITE, so the browser and agent tests run offline from a local copy
+          XITE=$(python -c "import x3dlab.pins as p; print(p.get('x_ite', 'version'))")
+          mkdir -p "$RUNNER_TEMP/xite" && cd "$RUNNER_TEMP/xite" && npm pack "x_ite@$XITE" --silent && tar xzf x_ite-*.tgz
+          echo "X3DLAB_XITE_DIR=$RUNNER_TEMP/xite/package/dist" >> "$GITHUB_ENV"
+      - name: Notebooks are up to date with notebooks/src
+        run: python tools/build_notebooks.py --check
+      - name: Tests (clones the pinned x3d_mcp fork)
+        run: pytest -q
+
+  regression-gate:
+    # Every verdict of the ci preset (matrix + 80 seeded fuzz cases, fork / lxml-xsd / consortium) against the baseline
+    # committed in src/x3dlab/baselines/ci.json. Fails on any verdict that got worse or any new finding bucket.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Install
-        run: pip install -e ".[server,notebook,dev]"
-      - name: Notebooks are up to date with notebooks/src
-        run: python tools/build_notebooks.py --check
-      - name: Tests (clones the pinned x3d_mcp fork)
-        run: pytest -q
+        run: pip install -e ".[server,research]"
+      - name: Gate
+        run: python -m x3dlab ci --quiet --out ci-out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: regression-gate
+          path: ci-out/
 
   blender:
     # The 02 Lab tests that drive real Blender: the bpy wheel exists only for Python 3.13 (about 400 MB).

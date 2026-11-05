@@ -1,0 +1,827 @@
+{
+ "created": "2026-11-04T22:01:53",
+ "fuzz": {
+  "buckets": [
+   "false_alarm|consortium|number_spelling|xsd:Element '\u2026', attribute '\u2026': [facet '\u2026'] The value '\u2026' is not",
+   "false_alarm|fork|number_spelling|xsd:Element '\u2026', attribute '\u2026': [facet '\u2026'] The value '\u2026' is not",
+   "false_alarm|lxml-xsd|number_spelling|xsd:[facet '\u2026'] The value '\u2026' is not accepted by the pattern '\\s",
+   "missed|consortium|profile|PointLight",
+   "missed|consortium|use_with_fields|Shape",
+   "missed|fork|use_with_fields|Shape",
+   "missed|lxml-xsd|dangling_use|Shape",
+   "missed|lxml-xsd|profile|PointLight",
+   "missed|lxml-xsd|route_bad_field|ROUTE",
+   "missed|lxml-xsd|use_with_fields|Shape",
+   "missed|lxml-xsd|wrong_container|Rectangle2D"
+  ],
+  "cases": 80,
+  "confusion": {
+   "consortium": {
+    "caught": 40,
+    "crash": null,
+    "false_alarm": 3,
+    "missed": 2,
+    "passed": 35,
+    "recall": 0.952,
+    "specificity": 0.921
+   },
+   "fork": {
+    "caught": 41,
+    "crash": null,
+    "false_alarm": 3,
+    "missed": 1,
+    "passed": 35,
+    "recall": 0.976,
+    "specificity": 0.921
+   },
+   "lxml-xsd": {
+    "caught": 35,
+    "crash": null,
+    "false_alarm": 3,
+    "missed": 7,
+    "passed": 35,
+    "recall": 0.833,
+    "specificity": 0.921
+   }
+  },
+  "expect": {
+   "c0000": "reject",
+   "c0001": "reject",
+   "c0002": "accept",
+   "c0003": "reject",
+   "c0004": "reject",
+   "c0005": "reject",
+   "c0006": "accept",
+   "c0007": "accept",
+   "c0008": "reject",
+   "c0009": "accept",
+   "c0010": "reject",
+   "c0011": "reject",
+   "c0012": "accept",
+   "c0013": "reject",
+   "c0014": "reject",
+   "c0015": "accept",
+   "c0016": "reject",
+   "c0017": "reject",
+   "c0018": "reject",
+   "c0019": "accept",
+   "c0020": "accept",
+   "c0021": "reject",
+   "c0022": "accept",
+   "c0023": "accept",
+   "c0024": "reject",
+   "c0025": "accept",
+   "c0026": "accept",
+   "c0027": "reject",
+   "c0028": "accept",
+   "c0029": "accept",
+   "c0030": "reject",
+   "c0031": "accept",
+   "c0032": "accept",
+   "c0033": "accept",
+   "c0034": "accept",
+   "c0035": "reject",
+   "c0036": "accept",
+   "c0037": "accept",
+   "c0038": "reject",
+   "c0039": "accept",
+   "c0040": "accept",
+   "c0041": "accept",
+   "c0042": "accept",
+   "c0043": "accept",
+   "c0044": "accept",
+   "c0045": "accept",
+   "c0046": "reject",
+   "c0047": "reject",
+   "c0048": "reject",
+   "c0049": "accept",
+   "c0050": "reject",
+   "c0051": "reject",
+   "c0052": "reject",
+   "c0053": "reject",
+   "c0054": "accept",
+   "c0055": "accept",
+   "c0056": "reject",
+   "c0057": "accept",
+   "c0058": "reject",
+   "c0059": "reject",
+   "c0060": "accept",
+   "c0061": "reject",
+   "c0062": "reject",
+   "c0063": "reject",
+   "c0064": "reject",
+   "c0065": "accept",
+   "c0066": "reject",
+   "c0067": "accept",
+   "c0068": "reject",
+   "c0069": "reject",
+   "c0070": "reject",
+   "c0071": "reject",
+   "c0072": "reject",
+   "c0073": "reject",
+   "c0074": "accept",
+   "c0075": "accept",
+   "c0076": "reject",
+   "c0077": "accept",
+   "c0078": "accept",
+   "c0079": "reject"
+  },
+  "oracles": [
+   "fork",
+   "lxml-xsd",
+   "consortium"
+  ],
+  "verdicts": {
+   "c0000": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0001": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "accept"
+   },
+   "c0002": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0003": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "accept"
+   },
+   "c0004": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0005": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0006": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0007": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0008": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0009": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0010": {
+    "consortium": "accept",
+    "fork": "reject",
+    "lxml-xsd": "accept"
+   },
+   "c0011": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0012": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0013": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0014": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0015": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0016": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0017": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0018": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0019": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0020": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0021": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0022": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0023": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0024": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0025": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0026": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0027": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "accept"
+   },
+   "c0028": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0029": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0030": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0031": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0032": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0033": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0034": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0035": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0036": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0037": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0038": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0039": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0040": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0041": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0042": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0043": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0044": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0045": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0046": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0047": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0048": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0049": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0050": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0051": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0052": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0053": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "accept"
+   },
+   "c0054": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0055": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0056": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0057": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0058": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0059": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0060": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0061": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0062": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0063": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0064": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0065": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0066": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0067": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0068": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0069": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "accept"
+   },
+   "c0070": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0071": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0072": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0073": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0074": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0075": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0076": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "c0077": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0078": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "c0079": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   }
+  }
+ },
+ "matrix": {
+  "expect": {
+   "defect:colour_range": "reject",
+   "defect:control": "accept",
+   "defect:duplicate_def": "reject",
+   "defect:field_typo": "reject",
+   "defect:invisible": "accept",
+   "defect:key_mismatch": "reject",
+   "defect:missing_def": "reject",
+   "defect:missing_profile": "reject",
+   "defect:pbr_no_component": "reject",
+   "defect:python_bool": "reject",
+   "defect:route_first": "reject",
+   "defect:route_types": "reject",
+   "defect:short_colour": "reject",
+   "defect:unclosed_tag": "reject",
+   "defect:unknown_node": "reject",
+   "defect:use_before_def": "reject",
+   "defect:wrong_container": "reject",
+   "family:animated": "accept",
+   "family:hierarchy": "accept",
+   "family:lights": "accept",
+   "family:materials": "accept",
+   "family:meshes": "accept",
+   "family:primitives": "accept"
+  },
+  "oracles": [
+   "fork",
+   "lxml-xsd",
+   "consortium"
+  ],
+  "sigs": {
+   "defect:colour_range": {
+    "consortium": "xsd:Element '\u2026', attribute '\u2026': [facet '\u2026'] The value '\u2026' is not",
+    "fork": "xsd:Element '\u2026', attribute '\u2026': [facet '\u2026'] The value '\u2026' is not",
+    "lxml-xsd": "xsd:[facet '\u2026'] The value '\u2026' is not accepted by the pattern '\\s"
+   },
+   "defect:control": {
+    "consortium": "",
+    "fork": "",
+    "lxml-xsd": ""
+   },
+   "defect:duplicate_def": {
+    "consortium": "xsd:Element '\u2026', attribute '\u2026': '\u2026' is not a valid value of the ",
+    "fork": "xsd:Element '\u2026', attribute '\u2026': '\u2026' is not a valid value of the ",
+    "lxml-xsd": "xsd:'\u2026' is not a valid value of the atomic type '\u2026'"
+   },
+   "defect:field_typo": {
+    "consortium": "xsd:Element '\u2026', attribute '\u2026': The attribute '\u2026' is not allowed",
+    "fork": "xsd:Element '\u2026', attribute '\u2026': The attribute '\u2026' is not allowed",
+    "lxml-xsd": "xsd:The attribute '\u2026' is not allowed"
+   },
+   "defect:invisible": {
+    "consortium": "",
+    "fork": "",
+    "lxml-xsd": ""
+   },
+   "defect:key_mismatch": {
+    "consortium": "semantic:interpolator-key-length",
+    "fork": "semantic:interpolator-key-length",
+    "lxml-xsd": ""
+   },
+   "defect:missing_def": {
+    "consortium": "semantic:use-undefined-def",
+    "fork": "semantic:use-undefined-def",
+    "lxml-xsd": ""
+   },
+   "defect:missing_profile": {
+    "consortium": "xsd:Element '\u2026': The attribute '\u2026' is required but missing",
+    "fork": "xsd:Element '\u2026': The attribute '\u2026' is required but missing",
+    "lxml-xsd": "xsd:The attribute '\u2026' is required but missing"
+   },
+   "defect:pbr_no_component": {
+    "consortium": "",
+    "fork": "semantic:profile-component",
+    "lxml-xsd": ""
+   },
+   "defect:python_bool": {
+    "consortium": "xsd:Element '\u2026', attribute '\u2026': '\u2026' is not a valid value of the ",
+    "fork": "xsd:Element '\u2026', attribute '\u2026': '\u2026' is not a valid value of the ",
+    "lxml-xsd": "xsd:'\u2026' is not a valid value of the atomic type '\u2026'"
+   },
+   "defect:route_first": {
+    "consortium": "",
+    "fork": "semantic:route-before-def",
+    "lxml-xsd": ""
+   },
+   "defect:route_types": {
+    "consortium": "semantic:route-type-mismatch",
+    "fork": "semantic:route-type-mismatch",
+    "lxml-xsd": ""
+   },
+   "defect:short_colour": {
+    "consortium": "xsd:Element '\u2026', attribute '\u2026': [facet '\u2026'] The value '\u2026' is not",
+    "fork": "xsd:Element '\u2026', attribute '\u2026': [facet '\u2026'] The value '\u2026' is not",
+    "lxml-xsd": "xsd:[facet '\u2026'] The value '\u2026' is not accepted by the pattern '\\s"
+   },
+   "defect:unclosed_tag": {
+    "consortium": "xml:parse",
+    "fork": "xml:parse",
+    "lxml-xsd": "xml:Opening and ending tag mismatch: Scene and XND, (<string>, )"
+   },
+   "defect:unknown_node": {
+    "consortium": "xsd:Element '\u2026': This element is not expected",
+    "fork": "xsd:Element '\u2026': This element is not expected",
+    "lxml-xsd": "xsd:This element is not expected"
+   },
+   "defect:use_before_def": {
+    "consortium": "semantic:use-before-def",
+    "fork": "semantic:use-before-def",
+    "lxml-xsd": ""
+   },
+   "defect:wrong_container": {
+    "consortium": "semantic:containerfield-unknown",
+    "fork": "semantic:containerfield-unknown",
+    "lxml-xsd": ""
+   },
+   "family:animated": {
+    "consortium": "",
+    "fork": "",
+    "lxml-xsd": ""
+   },
+   "family:hierarchy": {
+    "consortium": "",
+    "fork": "",
+    "lxml-xsd": ""
+   },
+   "family:lights": {
+    "consortium": "",
+    "fork": "",
+    "lxml-xsd": ""
+   },
+   "family:materials": {
+    "consortium": "",
+    "fork": "",
+    "lxml-xsd": ""
+   },
+   "family:meshes": {
+    "consortium": "",
+    "fork": "",
+    "lxml-xsd": ""
+   },
+   "family:primitives": {
+    "consortium": "",
+    "fork": "",
+    "lxml-xsd": ""
+   }
+  },
+  "verdicts": {
+   "defect:colour_range": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "defect:control": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "defect:duplicate_def": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "defect:field_typo": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "defect:invisible": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "defect:key_mismatch": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "accept"
+   },
+   "defect:missing_def": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "accept"
+   },
+   "defect:missing_profile": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "defect:pbr_no_component": {
+    "consortium": "accept",
+    "fork": "reject",
+    "lxml-xsd": "accept"
+   },
+   "defect:python_bool": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "defect:route_first": {
+    "consortium": "accept",
+    "fork": "reject",
+    "lxml-xsd": "accept"
+   },
+   "defect:route_types": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "accept"
+   },
+   "defect:short_colour": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "defect:unclosed_tag": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "defect:unknown_node": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "reject"
+   },
+   "defect:use_before_def": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "accept"
+   },
+   "defect:wrong_container": {
+    "consortium": "reject",
+    "fork": "reject",
+    "lxml-xsd": "accept"
+   },
+   "family:animated": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "family:hierarchy": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "family:lights": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "family:materials": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "family:meshes": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   },
+   "family:primitives": {
+    "consortium": "accept",
+    "fork": "accept",
+    "lxml-xsd": "accept"
+   }
+  }
+ },
+ "pins": {
+  "mcp": "mcp>=1.29,<2",
+  "x3d_blender_io": "hagopjay/x3d-blender-io@d9bbf91",
+  "x3d_mcp": "hagopjay/x3d_mcp@13121b6",
+  "x3d_mcp_upstream": "Web3DConsortium/x3d_mcp@ff0c0c9",
+  "x_ite": "16.7.0"
+ },
+ "preset": "ci",
+ "seed": 2026,
+ "timing": {
+  "fuzz_mean_ms": {
+   "consortium": 276.2,
+   "fork": 395.7,
+   "lxml-xsd": 0.6
+  },
+  "validate_ms_median": 53.0
+ },
+ "validate": {
+  "hierarchy \u00d7 4": "PASS",
+  "lights \u00d7 4": "PASS",
+  "materials \u00d7 4": "PASS",
+  "primitives \u00d7 4": "PASS"
+ },
+ "version": 1
+}

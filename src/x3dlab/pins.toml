@@ -6,8 +6,9 @@
 # The validator and MCP server. The fork is ahead of upstream and pins mcp<2.
 repo = "hagopjay/x3d_mcp"
 ref = "13121b68e6d9c8ffe12cb8bc9996c1bf01a90d67"     # 2026-11-03
-upstream = "Web3DConsortium/x3d_mcp"                 # linked, not run: its pyproject allows mcp 2.x,
-                                                     # where `mcp.server.fastmcp` no longer exists
+upstream = "Web3DConsortium/x3d_mcp"                 # its pyproject allows mcp 2.x, where `mcp.server.fastmcp`
+                                                     # no longer exists; the lab runs it under mcp<2
+upstream_ref = "ff0c0c94bc7a62874e3707109bfbd5bf02cb9fdd"   # 2026-10-09; the 03 notebook's second validator
 
 [x3d_blender_io]
 # Blender add-on (used from the 02 Lab notebook on).

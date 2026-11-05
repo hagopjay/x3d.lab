@@ -1,0 +1,54 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>x3d.lab viewer</title>
+<link rel="stylesheet" href="{{XITE_CSS}}">
+<style>
+  html,body{margin:0;height:100%;background:#15171c;color:#ddd;font:13px system-ui}
+  x3d-canvas{display:block;width:100vw;height:calc(100vh - 26px)}
+  #bar{height:26px;line-height:26px;padding:0 10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ok{color:#7bd88f}.bad{color:#ff7a7a}
+</style>
+<script src="{{XITE_SRC}}"></script></head>
+<body><div id="bar">x3d.lab viewer · loading…</div>
+<x3d-canvas id="c" splashScreen="false" notifications="false"></x3d-canvas>
+<script>
+// One scene per page: ?src=out/<job>/<file>.x3d (relative to the gateway). Each load is timed with performance.measure
+// on custom DevTools tracks (group "x3d.lab"), so a Performance trace shows parse / replaceWorld / first frames by name.
+const GROUP = "x3d.lab";
+function bar(name, t0, track, props) {
+  try { performance.measure(name, {start: t0, end: performance.now(), detail: {devtools: {dataType: "track-entry", track: track,
+        trackGroup: GROUP, color: "primary", properties: Object.entries(props || {}).map(([k, v]) => [k, String(v)])}}}); } catch (e) {}
+}
+window.lab = {
+  ready: customElements.whenDefined("x3d-canvas").then(() => document.getElementById("c").browser),
+  async load(xml, frames) {
+    const b = await this.ready, out = {ok: false, t: {}, errors: []}, t0 = performance.now();
+    try {
+      const scene = await b.createX3DFromString(xml);
+      out.t.parse = performance.now() - t0; bar("parse", t0, "X_ITE load", {bytes: xml.length});
+      const t1 = performance.now();
+      await b.replaceWorld(scene);
+      out.t.replace = performance.now() - t1; bar("replaceWorld", t1, "X_ITE load", {});
+      const t2 = performance.now();
+      for (let i = 0; i < 2 + (frames || 0); i++) await new Promise(r => requestAnimationFrame(r));
+      out.t.frame = performance.now() - t2; bar("first frames", t2, "X_ITE render", {});
+      out.rootNodes = scene.rootNodes.length; out.ok = true;
+    } catch (e) { out.errors.push(String(e && e.message || e)); console.error("x3d.lab load failed:", String(e && e.message || e)); }
+    out.t.total = performance.now() - t0;
+    if (performance.memory) out.heapMB = Math.round(performance.memory.usedJSHeapSize / 1e5) / 10;
+    window.__x3dlab_result = out;
+    console.info("x3d.lab load " + JSON.stringify(out));
+    const el = document.getElementById("bar");
+    el.className = out.ok ? "ok" : "bad";
+    el.textContent = out.ok ? `loaded · parse ${out.t.parse.toFixed(0)} ms · replace ${out.t.replace.toFixed(0)} ms · frames ${out.t.frame.toFixed(0)} ms`
+                            : "failed: " + out.errors[0];
+    return out;
+  },
+};
+const src = new URLSearchParams(location.search).get("src");
+if (src && /^out\/[A-Za-z0-9_.-]+(\/[A-Za-z0-9_.-]+)*\.x3d$/.test(src)) {
+  fetch(src, {cache: "no-store"}).then(r => r.ok ? r.text() : Promise.reject("HTTP " + r.status)).then(x => window.lab.load(x))
+    .catch(e => { document.getElementById("bar").textContent = "could not fetch " + src + ": " + e; console.error("x3d.lab fetch", String(e)); });
+} else {
+  document.getElementById("bar").textContent = "x3d.lab viewer · no ?src=out/<job>/<file>.x3d given; call window.lab.load(xml)";
+}
+</script></body></html>

@@ -62,6 +62,8 @@ class Lab:
     panel: object = None
     blender: object = None
     runs: list = field(default_factory=list)
+    upstream_client: X3DMCP | None = None
+    browser: object = None
 
     # ------------------------------------------------------------------ addresses
     @property
@@ -152,9 +154,13 @@ class Lab:
         """Run the 02 Lab stress test (blocking). Rows stream to the panel and the dashboard."""
         from . import stress
         cfg = cfg or stress.RunConfig.preset_for(preset)
-        run = stress.run(cfg, self, self.blender)
+        run = stress.run(cfg, self, self.blender, self.browser)
         self.runs.append(run)
         return run
+
+    def research(self, cfg=None, preset: str = "research"):
+        """Run the 03 research tiers (blocking): fuzz, matrix, cross-renderer, scale, traces."""
+        return self.stress(cfg, preset)
 
     def status(self) -> dict:
         return {"processes": procs.status(), "routes": self.urls, "jobs": [j.public() for j in self.jobs.recent(5)],
@@ -180,7 +186,39 @@ class Lab:
     def card(self) -> None:
         ui.show(_card_html(self))
 
+    def start_upstream(self, port: int = 8001) -> X3DMCP:
+        """The Web3D Consortium server (pinned upstream commit) on 127.0.0.1:`port`, never exposed by the gateway."""
+        src = install.upstream()
+        hostport = "127.0.0.1:%d" % port
+        env = dict(os.environ, MCP_TRANSPORT="streamable-http", HOST="127.0.0.1", PORT=str(port), PYTHONPATH=str(src),
+                   PYTHONUNBUFFERED="1", X3D_MCP_ALLOWED_HOSTS="%s,localhost:%d" % (hostport, port),
+                   X3D_MCP_ALLOWED_ORIGINS="http://%s,http://localhost:%d" % (hostport, port))
+        for k in [k for k in env if k.endswith("_API_KEY") or k.startswith("X3D_MCP_BLOB")]:
+            env.pop(k)
+        procs.start("x3d_mcp_upstream", [sys.executable, str(Path(src) / "server.py")], env=env, port=port,
+                    health="http://127.0.0.1:%d/pulse" % port, timeout=120, classify=procs.mcp_log_classifier())
+        self.upstream_client = X3DMCP("http://127.0.0.1:%d/mcp" % port)
+        with bus.span("consortium validator warm-up", track="Validator", src="lab"):
+            v = self.upstream_client.check(breakit.LANTERN)
+        bus.info("consortium x3d_mcp %s on port %d: sample scene %s" % (pins.get("x3d_mcp", "upstream_ref")[:8], port,
+                 "accepted" if v.ok else "REJECTED (%s)" % v.report(2)), src="lab")
+        return self.upstream_client
+
+    def start_browser(self, viewport=(640, 360)):
+        """Headless Chromium + X_ITE for the 03 notebook (the Copilot oracle too, when load_copilot() ran)."""
+        from . import browser as browser_mod
+        if self.browser is not None:
+            self.browser.close()
+        self.browser = browser_mod.start(copilot=self.copilot_dir, viewport=viewport)
+        return self.browser
+
     def down(self) -> None:
+        if self.browser is not None:
+            try:
+                self.browser.close()
+            except Exception:
+                pass
+            self.browser = None
         tunnels.stop_all()
         procs.stop_all()
         if self.panel:
@@ -196,6 +234,8 @@ def _xite(mode: str) -> tuple[str, str, Path | None]:
         js = pins.xite_url(ver)
         return js, js.replace("x_ite.min.js", "x_ite.css"), None
     dest = runtime.sub("vendor", "x_ite-%s" % ver)
+    if os.environ.get("X3DLAB_XITE_DIR"):                  # a local copy (offline machines, tests)
+        dest = Path(os.environ["X3DLAB_XITE_DIR"])
     if not (dest / "x_ite.min.js").is_file():
         url = "https://registry.npmjs.org/x_ite/-/x_ite-%s.tgz" % ver
         with bus.span("download X_ITE %s from npm" % ver, src="install"):

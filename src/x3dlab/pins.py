@@ -39,6 +39,7 @@ def summary() -> dict:
     p = _load()
     return {
         "x3d_mcp": "%s@%s" % (p["x3d_mcp"]["repo"], p["x3d_mcp"]["ref"][:7]),
+        "x3d_mcp_upstream": "%s@%s" % (p["x3d_mcp"]["upstream"], p["x3d_mcp"].get("upstream_ref", "main")[:7]),
         "x3d_blender_io": "%s@%s" % (p["x3d_blender_io"]["repo"], p["x3d_blender_io"]["ref"][:7]),
         "x_ite": p["x_ite"]["version"],
         "mcp": p["python"]["mcp"],

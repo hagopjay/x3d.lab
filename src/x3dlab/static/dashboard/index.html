@@ -61,13 +61,15 @@
     <div class="row between">
       <h2>Lab run <span id="lab-name" class="muted"></span></h2>
       <div class="row">
-        <select id="lab-preset"><option>smoke</option><option selected>standard</option><option>heavy</option></select>
+        <select id="lab-preset"><option>smoke</option><option selected>standard</option><option>heavy</option><option>research</option><option>ci</option></select>
         <button id="lab-start">Start stress run</button>
         <a id="lab-report" href="#" target="_blank" hidden>report ↗</a>
+        <a id="lab-fuzz" href="#" target="_blank" hidden>fuzz report ↗</a>
       </div>
     </div>
     <div class="lab-grid">
       <div><table class="issues" id="lab-tiers"></table>
+        <div id="lab-progress" class="small muted"></div>
         <h3 class="small">Findings</h3><ol id="lab-findings" class="steps"></ol></div>
       <div><div class="row between small"><span>GPU</span><span id="gpu-now" class="muted">no samples</span></div>
         <svg id="gpu-spark" viewBox="0 0 300 60" preserveAspectRatio="none" class="spark"></svg>

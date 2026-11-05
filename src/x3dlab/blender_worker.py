@@ -11,7 +11,9 @@ lab attaches to the task that was running (so an importer error message is never
 Task kinds
   probe      Blender/Python versions and the Cycles devices of every GPU backend
   roundtrip  import -> snapshot -> export (version) -> re-import -> snapshot, `generations` times
-  render     import, frame (X3D Viewpoint camera or automatic), Cycles on a backend, PNG + pixel statistics
+  render     import, frame (X3D Viewpoint camera or automatic), Cycles on a backend, PNG + pixel statistics;
+             film_transparent=True gives an RGBA PNG whose alpha is the silhouette (cross-renderer comparisons)
+  import     import only: did the importer accept the file, and what came out (the fuzzer's Blender oracle)
 """
 import hashlib
 import json
@@ -180,6 +182,25 @@ def task_roundtrip(t):
     return out
 
 
+def task_import(t):
+    fresh()
+    imp, ti = do_import(t["src"])
+    if "FINISHED" not in imp:
+        return {"error": "import returned %s" % imp}
+    return {"import": imp, "import_s": round(ti, 3), "counts": snapshot()["counts"]}
+
+
+def camera_info(scn):
+    cam = scn.camera
+    if cam is None:
+        return {}
+    d = cam.data
+    q = lambda x: round(float(x), 4)  # noqa: E731
+    return {"name": cam.name, "type": d.type, "angle": q(d.angle), "angle_x": q(d.angle_x), "angle_y": q(d.angle_y),
+            "sensor_fit": d.sensor_fit, "lens": q(d.lens), "clip": [q(d.clip_start), q(d.clip_end)],
+            "location": r(cam.matrix_world.translation), "rotation": r(cam.matrix_world.to_euler())}
+
+
 def set_backend(scn, backend):
     scn.render.engine = "CYCLES"
     if backend in (None, "", "CPU"):
@@ -247,6 +268,9 @@ def task_render(t):
         sun.data.energy = 3.0
         sun.rotation_euler = (0.9, 0.2, 0.6)
         scn.collection.objects.link(sun)
+    if t.get("film_transparent"):
+        scn.render.film_transparent = True
+        scn.render.image_settings.color_mode = "RGBA"
     scn.render.filepath = t["out_png"]
     scn.render.image_settings.file_format = "PNG"
     t0 = time.time()
@@ -265,10 +289,10 @@ def task_render(t):
     return {"backend": backend, "devices": devices, "camera": framing, "seconds": round(secs, 3), "import_s": round(ti, 3),
             "samples": scn.cycles.samples, "resolution": [int(w), int(h)], "png": t["out_png"],
             "bytes": os.path.getsize(t["out_png"]) if os.path.exists(t["out_png"]) else 0, "pixels": stats,
-            "counts": snapshot()["counts"]}
+            "counts": snapshot()["counts"], "camera_info": camera_info(scn)}
 
 
-KINDS = {"probe": task_probe, "roundtrip": task_roundtrip, "render": task_render}
+KINDS = {"probe": task_probe, "roundtrip": task_roundtrip, "render": task_render, "import": task_import}
 
 try:
     for task in JOB["tasks"]:
