@@ -26,10 +26,14 @@ optional render), 5c 2 good + 16 broken scenes with expected layer (KNOWN_GAPS c
 outside profile), 5d load (LOAD_SESSIONS x LOAD_CALLS_PER_SESSION), 6 scorecard JSON, 7a check a scene, 7b call any tool,
 8 stop.
 
-NOT YET DONE (next steps)
-1. Execute the notebook with nbclient for SERVER in {hagopjay, consortium}, TUNNEL=none (sandbox: HOME=/tmp/...,
-   kernel /home/claude/venv). Fix whatever breaks (check autofix output and the 5c verdicts on both servers).
-2. cloudflared/ngrok can't really be verified in the sandbox (network allowlist, no ngrok token). The user tests
-   those on Colab with their ngrok authtoken.
-3. Commit, try a push (it has failed with 403 so far: the Claude GitHub App is not installed on jasonthurman-sys/x3d.lab),
-   otherwise send a bundle. Add a row to the README table.
+Status (2026-11-05, later)
+- Executed end to end with nbclient, TUNNEL=none: hagopjay 50 PASS / 2 WARN / 1 SKIP (11 s); consortium 47 PASS /
+  1 WARN / 2 FAIL / 2 SKIP (9 s). The FAILs are the known gaps (ROUTE before DEF, PBR outside the profile).
+- Fun / learning features: glossary, "what you'll learn", inline X_ITE 3D views (lantern, the scene built
+  step by step, the solved challenge), a "what we broke" diff table with a grade, 💡 "what just happened" notes,
+  a 7a fix-3-mistakes challenge (answer in Troubleshooting). Viewer screenshots verified in headless Chromium.
+- Findings: autofix_x3d (both servers) and repair_x3d (fork) leave solid="True" invalid (autofix even reports 0
+  changes, 0 unfixable). X_ITE needs localStorage, so it can't run in srcdoc iframes: the viewer draws in the output.
+- Bug fixed: cloudflared's address regex matched api.trycloudflare.com from its error lines.
+- Not verifiable here: real tunnels (no DNS for trycloudflare in the sandbox, no ngrok token). The error paths
+  are verified; the user tests on Colab.

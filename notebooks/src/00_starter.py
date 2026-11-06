@@ -17,6 +17,23 @@
 # | nothing | `TUNNEL = none` and `cloudflared` |
 # | a free ngrok **authtoken** saved as Colab secret `NGROK_AUTHTOKEN` | `TUNNEL = ngrok` (the 🔑 icon on the left; turn on *Notebook access*) |
 #
+# **What you will learn:** what an MCP server is and how an app talks to it (handshake, tools, calls); how X3D describes a 3D scene; the three *layers* a validator checks, and which mistakes each one catches; how a password-protected tunnel puts a server on the internet safely; and how to measure a server under load.
+#
+# <details><summary><b>📖 Tiny X3D glossary</b> (click)</summary>
+#
+# | Word | Meaning | Example |
+# |---|---|---|
+# | **node** | one building block of a scene | `<Box/>`, `<Material/>`, `<Transform/>` |
+# | **field** | a setting of a node, written as an attribute | `size="2 2 2"`, `diffuseColor="1 0 0"` (red) |
+# | **Transform** | moves, turns or scales everything inside it | `<Transform translation="3 0 0">` = 3 m to the right |
+# | **Shape** | something visible: a geometry plus an appearance | `<Shape><Appearance>…</Appearance><Sphere/></Shape>` |
+# | **DEF / USE** | name a node once, reuse it elsewhere (one copy in memory) | `<Shape DEF="Body">` … `<Shape USE="Body"/>` |
+# | **ROUTE** | wire one node's output to another's input: how X3D animates | clock → interpolator → rotation |
+# | **profile** | which set of nodes a file promises to use (`Interchange` ⊂ `Immersive` ⊂ `Full`) | `<X3D profile="Interchange">` |
+# | **schema (XSD)** | the official grammar: which nodes and fields exist, which values are allowed | rejects `solid="True"` (X3D says `true`) |
+# | **semantic check** | rules a grammar can't express | a ROUTE that connects a number to a rotation |
+# </details>
+#
 # Status words used everywhere: **PASS** worked as expected · **WARN** worked, but something is worth a look · **FAIL** did not work, or a mistake slipped through · **SKIP** not run (the reason is shown).
 
 # %%
@@ -43,6 +60,7 @@ print("✅ Options saved: server = %s, tunnel = %s. Next: the advanced settings 
 # | `LOAD_CALLS_PER_SESSION` | 10 | validations per session in 5d | Total calls = sessions × calls. 16 × 10 = 160 calls, about 5–15 s. |
 # | `KEEP_TOKEN` | off | reuse the password saved as Colab secret `X3D_MCP_TOKEN` instead of a new random one | With a fixed `NGROK_DOMAIN` too, the connect command you gave Claude Code keeps working after a restart. Make a token with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. Anyone with address + token can use your server: keep it secret. |
 # | `NGROK_DOMAIN` | empty | a fixed ngrok address such as `my-name.ngrok-free.app` | Every free ngrok account gets one static domain: claim it at [dashboard.ngrok.com/domains](https://dashboard.ngrok.com/domains). Empty = a random address each time. |
+# | `SHOW_3D` | on | shows scenes live in the notebook (drag to turn, scroll to zoom) with the X_ITE browser | X_ITE loads from the jsdelivr CDN into *your* browser, not into Colab. Turn it off on slow connections or if your browser blocks it; the tests don't need it. |
 # | `VERBOSE` | off | prints every proxied request, package versions, the server's status JSON and every test line | Turn on when something fails. |
 # | `MCP_PORT` / `PROXY_PORT` | 8000 / 8080 | where the server and the password-checking proxy listen, on this machine only | Change only if something else already uses the port. Nothing outside Colab can reach these ports directly. |
 
@@ -57,6 +75,7 @@ LOAD_SESSIONS = 16  #@param {type:"slider", min:1, max:64, step:1}
 LOAD_CALLS_PER_SESSION = 10  #@param {type:"slider", min:1, max:50, step:1}
 KEEP_TOKEN = False  #@param {type:"boolean"}
 NGROK_DOMAIN = ""  #@param {type:"string"}
+SHOW_3D = True  #@param {type:"boolean"}
 VERBOSE = False  #@param {type:"boolean"}
 MCP_PORT = 8000  #@param {type:"integer"}
 PROXY_PORT = 8080  #@param {type:"integer"}
@@ -340,14 +359,16 @@ def start_cloudflared():
                               stdout=open(log, "w"), stderr=subprocess.STDOUT, start_new_session=True)
     for _ in range(120):
         text = open(log, errors="replace").read()
-        m = re.search(r"https://[-a-z0-9]+\.trycloudflare\.com", text)
+        # the tunnel's own address; not api.trycloudflare.com, which shows up in cloudflared's error lines
+        m = re.search(r"https://(?!api\.)[-a-z0-9]+\.trycloudflare\.com", text)
         if m:
             return m.group(0)
         if tunnel.poll() is not None or "429 Too Many Requests" in text:
             break
         time.sleep(0.5)
     text = open(log, errors="replace").read()
-    why = " Cloudflare is rate-limiting new quick tunnels: wait a minute and rerun, or use ngrok." if "429" in text else ""
+    why = (" Cloudflare is rate-limiting new quick tunnels: wait a minute and rerun, or use ngrok." if "429" in text else
+           " This machine cannot reach Cloudflare (a firewall?): try ngrok." if "api.trycloudflare.com" in text else "")
     raise RuntimeError("cloudflared did not give us an address.%s Its log:\n%s" % (why, text[-1500:]))
 
 NGROK_HINTS = {
@@ -466,6 +487,8 @@ else:
 # | **5b Tool tour** | the main tools both servers share: describe a node, list profiles, convert a scene to JSON, auto-fix a broken scene, then build a scene step by step (create → add children → read back → validate) | 3–10 s |
 # | **5c Good and broken scenes** | 2 correct scenes and 16 broken ones. For each broken one we know which *layer* should catch it: **xml** (not even well-formed), **xsd** (breaks the X3D schema: unknown node, wrong field, bad number), **semantic** (well-formed and schema-valid but wrong: a ROUTE between mismatched fields, a USE before its DEF) or **nobody** (valid but useless: an invisible scene) | 3–8 s |
 # | **5d Many at once** | `LOAD_SESSIONS` apps validating at the same time: speed, slowest calls, memory, still alive afterwards | 5–20 s |
+#
+# 🎯 *Before you run 5c, guess: which layer catches a misspelled field? A ROUTE that connects a number to a rotation? A file missing its `</Scene>`? Then compare with the "What we broke" table.*
 #
 # 💡 *Run the notebook once with `hagopjay` and once with `consortium`, then compare the two scorecards (section 6): that is the quickest way to see what the fork adds.*
 
@@ -589,7 +612,42 @@ async def verdict(s, xml):
     first = (x.get("errors") or [""])[0] if not x.get("valid") else (sem[0] if sem else "")
     return bool(x.get("valid")), sem, first
 
+def view3d(xml, title="", height=300):
+    """Show an X3D scene live in the notebook with X_ITE. It runs in your browser (loaded once from the jsdelivr CDN),
+    straight in the cell's output: Colab gives each output its own sandboxed frame, and X_ITE needs that frame's storage."""
+    if not SHOW_3D:
+        return
+    vid = "x3dview_" + secrets.token_hex(4)
+    display(HTML("""<div style='font:13px system-ui;margin-top:6px'><b>%s</b> <span style='color:#888'>· drag to turn, scroll to zoom</span></div>
+<x3d-canvas id='%s' splashScreen='false' contextMenu='false'
+  style='display:block;width:100%%;max-width:560px;height:%dpx;border-radius:8px;background:#10131a'></x3d-canvas>
+<pre id='%s_err' style='color:#c62828'></pre>
+<script>
+(async () => {
+  window.__xite = window.__xite || (window.X3D ? Promise.resolve() : new Promise((ok, bad) => { const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/x_ite@16.7.0/dist/x_ite.min.js'; s.onload = ok; s.onerror = bad; document.head.appendChild(s); }));
+  await window.__xite;
+  await customElements.whenDefined('x3d-canvas');
+  const c = document.getElementById('%s');
+  for (let i = 0; !c.browser && i < 100; i++) await new Promise(r => setTimeout(r, 50));
+  await c.browser.replaceWorld(await c.browser.createX3DFromString(%s));
+})().catch(e => { document.getElementById('%s_err').textContent = '3D view unavailable: ' + e; });
+</script>""" % (htmllib.escape(title), vid, height, vid, vid, json.dumps(xml).replace("</", "<\\/"), vid)))
+
+def first_xml(text):
+    """The first X3D document inside a tool's answer (plain XML, or a JSON field holding it)."""
+    try:
+        d = json.loads(text)
+        for k in ("fixed", "repaired", "content", "x3d", "xml", "result"):
+            if isinstance(d, dict) and isinstance(d.get(k), str) and "<X3D" in d[k]:
+                return d[k]
+    except (ValueError, TypeError):
+        pass
+    m = re.search(r"(<\?xml.*?</X3D>|<X3D.*?</X3D>)", text or "", re.S)
+    return m.group(1) if m else None
+
 print("✅ Helpers loaded. Tests will run %s: %s" % (ROUTE, TEST_URL.replace(MCP_TOKEN, "…")))
+view3d(GOOD, "Meet the test scene: a spinning lantern, and a smaller copy of its body made with USE")
 
 # %%
 #@title 5a · Say hello { display-mode: "form" }
@@ -636,11 +694,15 @@ table("5a")
 names = sorted(t.name for t in TOOLS)
 display(HTML("<details><summary style='font:13px system-ui'>Show all %d tool names</summary><p style='font:12px monospace'>%s</p></details>"
              % (len(names), ", ".join(names))))
+print("💡 What just happened: client and server shook hands (initialize) and agreed on MCP protocol %s. The server then "
+      "listed its %d tools, each with a description and an input schema: exactly what an AI app reads to decide which tool "
+      "to call. The %d characters of 'instructions' are the server's advice to that AI." % (INIT.protocolVersion, len(TOOLS), len(INIT.instructions or "")))
 
 # %%
 #@title 5b · Tool tour { display-mode: "form" }
 HAVE = {t.name for t in TOOLS}
 RENDERS = []
+BUILT = [None]
 
 def blank(res):
     """True when every returned picture is one flat colour (a render that drew nothing)."""
@@ -675,18 +737,38 @@ async def part_b():
             elif soft_error:
                 record("5b", label, "WARN", ms, out[:150].replace("\n", " "))
             else:
-                first = next((ln.strip("# ").strip() for ln in out.splitlines() if ln.strip()), "")
-                record("5b", label, "PASS", ms, (first[:110] if show else "%d characters" % len(out)) + (" + %d picture(s)" % len(images) if images else ""))
+                record("5b", label, "PASS", ms, (summarize(name, out) if show else "%d characters" % len(out)) + (" + %d picture(s)" % len(images) if images else ""))
             return out
+
+        def summarize(name, out):
+            try:
+                d = json.loads(out)
+            except ValueError:
+                return next((ln.strip("# ").strip() for ln in out.splitlines() if ln.strip()), "")[:120]
+            if name == "describe_node":
+                return "%s: %s component, level %s, %d fields, goes in a parent's '%s'" % (
+                    d.get("name"), d.get("component"), d.get("level"), len(d.get("fields") or []), d.get("containerField"))
+            if name == "list_profiles":
+                return "%d profiles: %s" % (len(d), ", ".join(d))
+            if isinstance(d, dict) and "changes" in d:
+                return "%d change(s), %d unfixable" % (len(d.get("changes") or []), len(d.get("unfixable") or []))
+            return json.dumps(d)[:120]
 
         await call("describe_node", {"node_type": "Transform"}, "describe_node Transform", show=True)
         await call("list_profiles", {}, show=True)
         await call("convert_x3d", {"content": GOOD2, "from_encoding": "xml", "to_encoding": "json"}, "convert_x3d sphere: XML → JSON")
         broken = GOOD2.replace('<Sphere radius="1.5"/>', '<Sphere radius="1.5" solid="True"/>')
-        fixed = await call("autofix_x3d", {"content": broken}, "autofix_x3d (solid=\"True\" → true)", show=True)
-        if fixed is not None:
-            record("5b", "autofix_x3d really fixed it", "PASS" if 'solid="true"' in fixed else "WARN", None,
-                   'output has solid="true"' if 'solid="true"' in fixed else "no corrected attribute in the output")
+        for tool in ("autofix_x3d", "repair_x3d"):
+            out = await call(tool, {"content": broken}, '%s on solid="True"' % tool, show=True)
+            if out is None:
+                continue
+            fixed = first_xml(out)
+            if not fixed:
+                record("5b", "%s: re-validate its answer" % tool, "WARN", None, "no X3D document in the answer to check")
+                continue
+            ok, sem, first = await verdict(s, fixed)
+            record("5b", "%s: re-validate its answer" % tool, "PASS" if ok and not sem else "WARN", None,
+                   "the result is valid" if ok and not sem else "still invalid after the fix: %s" % first[:100])
         # build a scene step by step, like an AI would: an orange box inside a Transform
         await call("reset_scene", {})
         await call("create_scene", {"description": "starter test scene", "profile": "Interchange"})
@@ -702,6 +784,7 @@ async def part_b():
                 await call("add_child", {"parent_id": ids[parent], "child_id": ids[child], "container_field": field},
                            "add_child %s → %s" % (child, parent))
             built = await call("get_scene", {}, "get_scene (read it back)")
+            BUILT[0] = first_xml(built or "") or built
             if built:
                 record("5b", "the built scene contains the box", "PASS" if "<Box" in built and "Transform" in built else "FAIL", None,
                        "%d characters of X3D" % len(built))
@@ -716,6 +799,12 @@ async def part_b():
 
 run(part_b())
 table("5b")
+still_bad = [r["name"].split(":")[0] for r in RESULTS if r["name"].endswith(": re-validate its answer") and r["status"] == "WARN"]
+if still_bad:
+    print("💡 Lesson: %s answered without complaint, yet the scene is still invalid (X3D booleans are lower-case: true / "
+          "false). A tool saying 'done' is not proof: always validate again after an automatic fix." % " and ".join(still_bad))
+if BUILT[0]:
+    view3d(BUILT[0], "The scene the server just built, one tool call at a time")
 if RENDERS:
     display(HTML("".join("<figure style='display:inline-block;margin:6px'><img src='data:image/png;base64,%s' width=320>"
                          "<figcaption style='font-size:12px'>%s</figcaption></figure>" % (data, name) for name, data in RENDERS)))
@@ -775,11 +864,34 @@ async def part_c():
             record("5c", name, status, (time.perf_counter() - t) * 1000,
                    "caught by %s%s%s · %s" % (got, "" if got == expect else " (expected %s)" % expect, note, first[:110]))
 
+import difflib
+
+def what_changed(name):
+    """The lines that differ between the good lantern and one broken version: what the mistake looks like."""
+    bad = DEFECTS[name][0](GOOD)
+    return [l for l in difflib.unified_diff(GOOD.splitlines(), bad.splitlines(), lineterm="", n=0)
+            if l[:1] in "+-" and not l.startswith(("+++", "---"))][:4]
+
 run(part_c())
 table("5c")
-missed = [r["name"] for r in RESULTS if r["part"] == "5c" and r["status"] == "FAIL"]
-print("Caught %d of %d broken scenes%s" % (len(DEFECTS) - 1 - len([m for m in missed if not m.startswith("good")]), len(DEFECTS) - 1,
-      (". Slipped through: " + ", ".join(missed)) if missed else "."))
+rows = {r["name"]: r for r in RESULTS if r["part"] == "5c"}
+tr = []
+for name, (_, expect) in DEFECTS.items():
+    r = rows.get(name)
+    if r:
+        diff = "<br>".join("<span style='color:%s'>%s</span>" % ("#c62828" if l[0] == "-" else "#1d6b3a", htmllib.escape(l[:95].strip()))
+                           for l in what_changed(name))
+        tr.append("<tr><td><b>%s</b></td><td style='font:11px monospace'>%s</td><td>%s</td><td style='color:%s'><b>%s</b></td></tr>" % (
+            htmllib.escape(name), diff, expect, COLORS[r["status"]], htmllib.escape(r["detail"].split(" · ")[0])))
+display(HTML("<details open><summary style='font:14px system-ui'><b>What we broke, and who caught it</b> "
+             "(red = the original line, green = the broken one)</summary><table style='font-size:12px'><tr><th align=left>mistake</th>"
+             "<th align=left>the change</th><th>should be caught by</th><th align=left>result</th></tr>%s</table></details>" % "".join(tr)))
+broken_total = sum(1 for _, e in DEFECTS.values() if e != "nobody")
+missed = [n for n, r in rows.items() if r["status"] == "FAIL" and not n.startswith("good")]
+print(("🏆 Caught all %d broken scenes." % broken_total) if not missed else
+      "🕵️ Caught %d of %d broken scenes. Slipped through: %s" % (broken_total - len(missed), broken_total, ", ".join(missed)))
+print("💡 'valid but invisible' passes on purpose: every object is fully transparent. It breaks no rule, so no validator "
+      "objects. Validators check rules, not whether a scene makes sense to a person.")
 
 # %%
 #@title 5d · Many at once { display-mode: "form" }
@@ -819,6 +931,8 @@ async def part_d():
 
 LATENCIES = run(part_d())
 table("5d")
+print("💡 Typical (median) = half the calls were faster. The slowest 5 %% is what an unlucky user feels. With %d apps at once "
+      "on %s CPU cores, calls wait in line: try LOAD_SESSIONS = 1 to see how much of the time is queueing." % (LOAD_SESSIONS, os.cpu_count()))
 try:
     import matplotlib.pyplot as plt
     plt.figure(figsize=(7, 2.3))
@@ -863,14 +977,16 @@ if DOWNLOAD:
 # %% [markdown]
 # ## 7 · Try it yourself
 #
-# **7a** checks a scene: pick one of the test scenes, or choose *my own* and paste X3D into `MY_X3D` (one line is fine). **7b** calls any tool by name with JSON arguments; the list of tool names is under 5a. In `ARGS`, `"$GOOD"` and `"$GOOD2"` stand for the lantern and the sphere.
+# **7a 🧩 Challenge:** `MY_X3D` holds a small scene (a red box next to a green ball) with **three mistakes**. Run the cell, read the complaints, fix `MY_X3D` in the form, run again. When it is valid you see it in 3D. Stuck? The glossary at the top helps; the answer is at the end of Troubleshooting. You can also pick one of the test scenes, or paste your own X3D (one line is fine).
+#
+# **7b** calls any tool by name with JSON arguments; the list of tool names is under 5a. In `ARGS`, `"$GOOD"` and `"$GOOD2"` stand for the lantern and the sphere.
 
 # %%
 #@title 7a · Check a scene { display-mode: "form" }
-SCENE = "my own (paste below)"  #@param ["my own (paste below)", "good: spinning lantern", "good: sphere", "broken: Python boolean True", "broken: ROUTE type mismatch", "broken: USE before its DEF", "broken: unclosed tag"]
-MY_X3D = '<X3D profile="Interchange" version="4.0"><Scene><Shape><Appearance><Material diffuseColor="1 0 0"/></Appearance><Box/></Shape></Scene></X3D>'  #@param {type:"string"}
+SCENE = "MY_X3D (the challenge, or your own)"  #@param ["MY_X3D (the challenge, or your own)", "good: spinning lantern", "good: sphere", "broken: Python boolean True", "broken: ROUTE type mismatch", "broken: USE before its DEF", "broken: unclosed tag"]
+MY_X3D = '<X3D profile="Interchange" version="4.0"><Scene><Viewpoint position="1.5 0 8"/><Shape><Appearance><Material difuseColor="1 0 0"/></Appearance><Box size="2 2 2" solid="True"/></Shape><Transform translation="3 0 0"><Shape><Appearance><Material diffuseColor="0 1.5 0"/></Appearance><Sphere/></Shape></Transform></Scene></X3D>'  #@param {type:"string"}
 
-if SCENE.startswith("my own"):
+if SCENE.startswith("MY_X3D"):
     xml = MY_X3D
 elif SCENE.startswith("good"):
     xml = GOOD if "lantern" in SCENE else GOOD2
@@ -880,6 +996,7 @@ else:
 async def check_one():
     async with session() as s:
         ok, sem, first = await verdict(s, xml)
+        first = json.loads(text_of(await s.call_tool("validate_x3d", {"content": xml}))).get("errors") or [first]
         raw = text_of(await s.call_tool("validate_semantic", {"content": xml}))
         hints = None
         if not (ok and not sem) and "exact_fix_hints" in HAVE:
@@ -888,9 +1005,14 @@ async def check_one():
 
 ok, sem, first, raw, hints = run(check_one())
 if ok and not sem:
-    print("✅ Valid: the schema and the semantic checks are happy.")
+    print("🎉 Valid! The schema and the semantic checks are happy." + (" You fixed all three mistakes." if SCENE.startswith("MY_X3D") and "difuse" not in MY_X3D else ""))
+    view3d(xml, "Your scene")
 else:
-    print("❌ Not valid.", "Schema: %s" % ("OK" if ok else first), "\n   Semantic problems: %s" % (", ".join(sem) or "none"))
+    print("❌ Not valid yet: %d problem(s) found. Fixing one can reveal the next, so run again after each change." % ((0 if ok else len(first)) + len(sem)))
+    for e in ([] if ok else first):
+        print("   schema:  ", e)
+    for e in sem:
+        print("   semantic:", e)
 if hints:
     print("\nHow to fix it (exact_fix_hints, hagopjay only):\n" + hints[:2500])
 if VERBOSE:
@@ -946,6 +1068,7 @@ show_log(6)
 # * **The fork catches more.** On consortium `main` (Oct 2026) two broken lantern scenes in 5c slip through: a ROUTE before its DEF, and PBR materials outside the declared profile. A larger fuzzing run in x3d.lab's 03 notebook (thousands of generated scenes) found that consortium also misses nodes outside the declared profile and face indices that point past the coordinate list. It catches 95.2 % of broken scenes against the fork's 97.6 %.
 # * **Blind spots they share:** a `USE` node that also sets fields (`<Shape USE="A" bboxSize="1 1 1"/>`) is accepted by both, though X3D allows nothing but `containerField` there. And the X3D schema itself rejects colours written in exponent form even when they are in range: `diffuseColor="0.5 1.5e-1 0.2"` (0.15) fails, `0.15` passes. Any exporter that writes numbers `%e`-style is rejected by both servers.
 # * **Why `PIN_MCP_BELOW_2` exists:** consortium's `pyproject.toml` asks for `mcp>=1.7` with no ceiling. `mcp` 2.x removed `mcp.server.fastmcp`, which the server imports, so a plain install crashes at start-up. The fork pins `mcp<2` itself.
+# * **Auto-fixers are not validators.** Both servers' `autofix_x3d`, and hagopjay's `repair_x3d`, return `solid="True"` unchanged (`autofix_x3d` even reports 0 changes and 0 unfixable problems), although the schema rejects it. 5b re-validates every "fixed" answer for exactly that reason.
 # * hagopjay's `render_current_scene` returns a blank picture for a scene that `render_image` draws when given the same XML: a server bug. The full smoke test (x3d.lab's 00 Basic notebook) checks it automatically.
 #
 # **The plumbing**
@@ -977,4 +1100,5 @@ show_log(6)
 # | Claude Code: 401 or *connection failed* | new runtime = new address and password | rerun section 4, `claude mcp remove x3d-colab`, paste the new command |
 # | 5b: `render_image` blank | X_ITE could not load from its CDN | tick `LOCAL_XITE` (hagopjay only) |
 # | 5d: errors under load through the tunnel | the tunnel's free plan is throttling, or too many sessions for 2 CPU cores | fewer `LOAD_SESSIONS`, or untick `TEST_THROUGH_TUNNEL` |
+# | 7a challenge: stuck | | the answer: `difuseColor` → `diffuseColor`; `solid="True"` → `solid="true"`; green `0 1.5 0` → `0 1 0` (each colour channel runs from 0 to 1) |
 # | pip warns *you must restart the runtime* | Colab had loaded an older copy of a package | usually harmless here; if an import fails later, *Runtime › Restart session* and *Run all* |
