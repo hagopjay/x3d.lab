@@ -1,5 +1,5 @@
 # %% [markdown]
-# <a href="https://colab.research.google.com/github/jasonthurman-sys/x3d.lab/blob/main/notebooks/01_Quickstart.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
+# <a href="https://colab.research.google.com/github/hagopjay/x3d.lab/blob/main/notebooks/01_Quickstart.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
 #
 # # x3d.lab · 01 Quickstart
 #
@@ -48,7 +48,7 @@ LOG_DENSITY = "compact"  #@param ["compact", "rich", "firehose"]
 LOG_TO_SCREEN = True  #@param {type:"boolean"}
 MAX_MODEL_RUNS = 30  #@param {type:"integer"}
 NGROK_DOMAIN = ""  #@param {type:"string"}
-LAB_REPO = "jasonthurman-sys/x3d.lab"
+LAB_REPO = "hagopjay/x3d.lab"
 LAB_REF = "main"
 
 import importlib.util, os, subprocess, sys

@@ -16,8 +16,11 @@ import nbformat
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "notebooks" / "src"
 OUT = ROOT / "notebooks"
-NAMES = {"00_basic_mcp.py": ("00_Basic_MCP.ipynb", None), "01_quickstart.py": ("01_Quickstart.ipynb", None),
+NAMES = {"00_starter.py": ("00_MCP_Starter.ipynb", None), "00_basic_mcp.py": ("00_Basic_MCP.ipynb", None), "01_quickstart.py": ("01_Quickstart.ipynb", None),
          "02_lab.py": ("02_Lab.ipynb", "GPU"), "03_research.py": ("03_Research.ipynb", "GPU")}   # name -> (output, accelerator)
+
+
+COLLAPSED = "<!-- collapsed -->"   # put this line in a markdown cell under its heading to fold that section
 
 
 def parse(text: str) -> list:
@@ -47,11 +50,16 @@ def build(src: Path) -> tuple[Path, str]:
     out_name, accel = NAMES[src.name]
     nb = nbformat.v4.new_notebook()
     nb.cells = parse(src.read_text(encoding="utf-8"))
+    collapsed = []
     for i, c in enumerate(nb.cells):
         c["id"] = "%s-%02d" % (src.stem.replace("_", "-"), i)
         if c.cell_type == "code":
-            c.metadata["cellView"] = "form"
-    nb.metadata = {"colab": {"provenance": [], "include_colab_link": True, "toc_visible": True},
+            c.metadata["cellView"] = "form"           # Colab shows the title and form, the code stays hidden
+        elif COLLAPSED in c.source:                   # a heading whose section starts folded in Colab
+            c.source = "\n".join(ln for ln in c.source.splitlines() if ln.strip() != COLLAPSED)
+            collapsed.append(c["id"])
+    nb.metadata = {"colab": {"provenance": [], "include_colab_link": True, "toc_visible": True,
+                             **({"collapsed_sections": collapsed} if collapsed else {})},
                    "kernelspec": {"display_name": "Python 3", "name": "python3"}, "language_info": {"name": "python"}}
     if accel:
         nb.metadata["accelerator"] = accel
