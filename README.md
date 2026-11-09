@@ -2,6 +2,15 @@
 
 Colab notebooks and a shared toolkit for authoring and testing [X3D](https://www.web3d.org/x3d/what-x3d) with AI: the **x3d_mcp** validator and MCP server, the **X_ITE** browser, **Blender**, and models from OpenAI, Anthropic (Claude) or Google (Gemini). A live dashboard follows every run in your browser, on your phone, and in Chrome DevTools.
 
+## Start here: two tracks
+
+| Track | Notebooks | Needs the `x3dlab` package? | Use it for |
+|---|---|---|---|
+| **A · Plain MCP** (start here) | 00 MCP Starter, 00 Basic MCP | No. All code is in the cells; `python tools/run_basic.py` checks there is no `x3dlab` reference | Install an X3D MCP server, test it on 127.0.0.1, optionally expose it through a Cloudflare quick tunnel or ngrok behind a bearer token |
+| **B · x3dlab kit** | 01 Quickstart, 02 Lab, 03 Research | Yes: they clone this repo (`LAB_REPO` in each source) and import `src/x3dlab/` | Dashboard, Blender round trips, fuzzing, the regression gate |
+
+Local runbook (outside Colab): [docs/HANDOFF.md](docs/HANDOFF.md).
+
 | Notebook | For | Runtime | Status |
 |---|---|---|---|
 | [00 MCP Starter](notebooks/00_MCP_Starter.ipynb) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hagopjay/x3d.lab/blob/main/notebooks/00_MCP_Starter.ipynb) | start here (undergrads): code hidden behind forms, either server, none / Cloudflare / ngrok behind a password, then a guided test: hello, tool tour, 16 broken scenes with "what we broke", a load test, a scorecard, live 3D views and a fix-3-mistakes challenge. No package | CPU | ready |
