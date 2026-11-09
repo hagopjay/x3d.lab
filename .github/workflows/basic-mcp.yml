@@ -26,7 +26,7 @@ jobs:
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v5
-      - name: Runner (a virtual environment, like a local Jupyter: the case `uv pip install --system` got wrong)
+      - name: Runner in a virtual environment (like a local Jupyter, the case that `uv pip install --system` got wrong)
         run: |
           python -m venv "$RUNNER_TEMP/kernel-env"
           "$RUNNER_TEMP/kernel-env/bin/pip" install nbformat nbclient ipykernel
