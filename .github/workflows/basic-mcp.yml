@@ -1,0 +1,38 @@
+name: basic-mcp
+
+# Track A: the plain MCP notebook (00_Basic_MCP). No x3dlab import anywhere. Runs the notebook headless against the pinned fork on
+# 127.0.0.1 and fails on any FAIL row. The tunnel step (cloudflared / ngrok) is skipped by tools/run_basic.py when no token
+# or network is available, so this job never needs secrets. Both installer branches of cell 2 are exercised.
+
+on:
+  push:
+    branches: [main]
+    paths: ["notebooks/src/00_basic_mcp.py", "notebooks/00_Basic_MCP.ipynb", "tools/run_basic.py", ".github/workflows/basic-mcp.yml"]
+  pull_request:
+    paths: ["notebooks/src/00_basic_mcp.py", "notebooks/00_Basic_MCP.ipynb", "tools/run_basic.py", ".github/workflows/basic-mcp.yml"]
+  workflow_dispatch:
+
+jobs:
+  basic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        installer: [uv, pip]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v5
+      - name: Runner (a virtual environment, like a local Jupyter: the case `uv pip install --system` got wrong)
+        run: |
+          python -m venv "$RUNNER_TEMP/kernel-env"
+          "$RUNNER_TEMP/kernel-env/bin/pip" install nbformat nbclient ipykernel
+      - name: Notebook is up to date with notebooks/src
+        run: |
+          python -m pip install nbformat
+          python tools/build_notebooks.py --check
+      - name: Run 00_Basic_MCP
+        run: '"$RUNNER_TEMP/kernel-env/bin/python" -I tools/run_basic.py --installer ${{ matrix.installer }}'

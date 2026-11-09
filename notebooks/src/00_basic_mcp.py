@@ -62,7 +62,9 @@ deps = [d for d in declared if not (PIN_MCP_BELOW_2 and d.replace(" ", "").lower
 if PIN_MCP_BELOW_2:
     deps.append("mcp>=1.29,<2")
 deps += ["psutil", "httpx", "qrcode"] + (["pyngrok>=7"] if TUNNEL == "ngrok" else [])
-PIP = "uv pip install --system -q" if shutil.which("uv") else f"{sys.executable} -m pip install -q"
+# Install into the interpreter that runs this kernel: `uv pip install --system` targets whichever Python uv finds first, which is not
+# the kernel's own inside a virtual environment, a Jupyter install or CI (the server then fails with "No module named 'mcp'").
+PIP = f"uv pip install --python {sys.executable} -q" if shutil.which("uv") else f"{sys.executable} -m pip install -q"
 quoted = " ".join("'%s'" % d for d in deps)
 print("installing:", ", ".join(deps))
 !{PIP} {quoted}
