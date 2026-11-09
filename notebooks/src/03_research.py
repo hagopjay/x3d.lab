@@ -1,5 +1,5 @@
 # %% [markdown]
-# <a href="https://colab.research.google.com/github/jasonthurman-sys/x3d.lab/blob/main/notebooks/03_Research.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
+# <a href="https://colab.research.google.com/github/hagopjay/x3d.lab/blob/main/notebooks/03_Research.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
 #
 # # x3d.lab · 03 Research: break the validators, compare the renderers, gate the regressions
 #
@@ -28,7 +28,7 @@
 TUNNEL = "none"  #@param ["none", "cloudflared", "ngrok"]
 LOG_LEVEL = "INFO"  #@param ["DEBUG", "INFO", "WARN", "ERROR"]
 LOG_DENSITY = "compact"  #@param ["compact", "rich", "firehose"]
-LAB_REPO = "jasonthurman-sys/x3d.lab"
+LAB_REPO = "hagopjay/x3d.lab"
 LAB_REF = "main"
 
 import importlib.util, os, subprocess, sys

@@ -1,5 +1,5 @@
 # %% [markdown]
-# <a href="https://colab.research.google.com/github/jasonthurman-sys/x3d.lab/blob/main/notebooks/00_MCP_Starter.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
+# <a href="https://colab.research.google.com/github/hagopjay/x3d.lab/blob/main/notebooks/00_MCP_Starter.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
 #
 # # X3D MCP Starter: run an X3D server and put it through its paces
 #

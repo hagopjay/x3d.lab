@@ -1,5 +1,5 @@
 # %% [markdown]
-# <a href="https://colab.research.google.com/github/jasonthurman-sys/x3d.lab/blob/main/notebooks/00_Basic_MCP.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
+# <a href="https://colab.research.google.com/github/hagopjay/x3d.lab/blob/main/notebooks/00_Basic_MCP.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
 #
 # # x3d.lab · 00 Basic: an X3D MCP server on Colab, exposed and smoke-tested
 #
