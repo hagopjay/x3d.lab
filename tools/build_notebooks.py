@@ -17,7 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "notebooks" / "src"
 OUT = ROOT / "notebooks"
 NAMES = {"00_starter.py": ("00_MCP_Starter.ipynb", None), "00_basic_mcp.py": ("00_Basic_MCP.ipynb", None), "01_quickstart.py": ("01_Quickstart.ipynb", None),
-         "02_lab.py": ("02_Lab.ipynb", "GPU"), "03_research.py": ("03_Research.ipynb", "GPU")}   # name -> (output, accelerator)
+         "02_lab.py": ("02_Lab.ipynb", "GPU"), "03_research.py": ("03_Research.ipynb", "GPU"),
+         "04_duel.py": ("04_Model_Duel.ipynb", None)}   # name -> (output, accelerator)
 
 
 COLLAPSED = "<!-- collapsed -->"   # put this line in a markdown cell under its heading to fold that section

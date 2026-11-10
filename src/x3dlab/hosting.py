@@ -158,6 +158,11 @@ class Lab:
         self.runs.append(run)
         return run
 
+    def duel(self, cfg=None, **kw):
+        """Same prompts to several models; x3d_mcp scores every scene (blocking). See x3dlab.duel."""
+        from . import duel
+        return duel.run(self, cfg, **kw)
+
     def research(self, cfg=None, preset: str = "research"):
         """Run the 03 research tiers (blocking): fuzz, matrix, cross-renderer, scale, traces."""
         return self.stress(cfg, preset)

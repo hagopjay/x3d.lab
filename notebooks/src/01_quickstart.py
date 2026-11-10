@@ -10,7 +10,7 @@
 # | | You will |
 # |---|---|
 # | **1** | start the x3d_mcp server and a dashboard, and choose how to reach them |
-# | **2** | add an API key for OpenAI, Claude or Gemini (optional: everything works without one, on a sample scene) |
+# | **2** | add an API key for OpenAI, Claude, Gemini or NVIDIA (optional: everything works without one, on a sample scene) |
 # | **3** | ask for a scene and watch the write, validate, repair loop |
 # | **4** | call the MCP tools yourself |
 # | **5** | connect Claude Code, Claude Desktop or Cursor to *this* Colab |
@@ -68,12 +68,12 @@ lab = x3dlab.up(tunnel=TUNNEL, show=SHOW_DASHBOARD, expose_mcp=EXPOSE_MCP, log_l
 # %% [markdown]
 # ## 2 · API keys
 #
-# Any one provider is enough. Paste a key, or store it once in Colab **Secrets** (the key icon in the left bar) as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` or `GEMINI_API_KEY` and allow this notebook to read it. **Test** lists the models your key can use and picks a sensible default; change it in the dropdown.
+# Any one provider is enough. Paste a key, or store it once in Colab **Secrets** (the key icon in the left bar) as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` or `NVIDIA_API_KEY` and allow this notebook to read it. **Test** lists the models your key can use and picks a sensible default; change it in the dropdown.
 #
 # Keys stay inside this Colab kernel. They are removed from every log line and never sent to the dashboard, a tunnel or the x3d_mcp server.
 
 # %%
-#@title 2 · API keys (OpenAI, Claude or Gemini)
+#@title 2 · API keys (OpenAI, Claude, Gemini or NVIDIA)
 x3dlab.keys.widget()
 
 # %% [markdown]
@@ -87,7 +87,7 @@ x3dlab.keys.widget()
 # %%
 #@title 3 · Make a scene
 PROMPT = "A small lighthouse on a rocky island at dusk, with a slowly turning lamp and calm blue water."  #@param {type:"string"}
-PROVIDER = "auto"  #@param ["auto", "anthropic", "openai", "gemini", "sample"]
+PROVIDER = "auto"  #@param ["auto", "anthropic", "openai", "gemini", "nvidia", "sample"]
 MODE = "simple"  #@param ["simple", "agent"]
 REPAIR_ROUNDS = 2  #@param {type:"slider", min:0, max:4, step:1}
 X3D_VERSION = "4.0"  #@param ["4.0", "4.1"]

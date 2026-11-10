@@ -1,4 +1,4 @@
-"""API keys for OpenAI, Claude and Gemini: entered in a password box or read from Colab Secrets.
+"""API keys for OpenAI, Claude, Gemini and NVIDIA: entered in a password box or read from Colab Secrets.
 
 Keys live only in this kernel (a dict and os.environ). They are registered with the event bus so they
 are redacted from every log line, file and dashboard event, and the gateway never sends them to a browser.
@@ -18,8 +18,8 @@ _chosen: dict[str, str] = {}
 _errors: dict[str, str] = {}
 _lock = threading.RLock()
 
-ORDER = ("anthropic", "openai", "gemini")   # preference for provider="auto"
-HINTS = {"openai": "sk-...", "anthropic": "sk-ant-...", "gemini": "AIza..."}
+ORDER = ("anthropic", "openai", "gemini", "nvidia")   # preference for provider="auto"
+HINTS = {"openai": "sk-...", "anthropic": "sk-ant-...", "gemini": "AIza...", "nvidia": "nvapi-..."}
 
 
 def set_key(provider: str, key: str | None) -> None:
@@ -192,7 +192,7 @@ def widget():
     b_forget = W.Button(description="Forget keys", icon="trash")
     note = W.HTML("<small>Keys stay in this Colab kernel. They are redacted from logs and never sent to the dashboard "
                   "or a tunnel. Add them once under the key icon (Secrets) as OPENAI_API_KEY, ANTHROPIC_API_KEY, "
-                  "GEMINI_API_KEY to skip typing.</small>")
+                  "GEMINI_API_KEY or NVIDIA_API_KEY to skip typing.</small>")
 
     def refresh():
         for p in llm.PROVIDERS:
