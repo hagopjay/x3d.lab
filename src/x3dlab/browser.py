@@ -40,8 +40,10 @@ _COMMON_ARGS = ["--ignore-gpu-blocklist", "--no-sandbox", "--disable-dev-shm-usa
 CHROME_ARGS = ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] + _COMMON_ARGS
 # GPU attempt: ANGLE on Vulkan, which needs the NVIDIA Vulkan driver (an ICD in /usr/share/vulkan/icd.d) inside the container.
 # Without it Chrome falls back to SwiftShader on its own; Browser.info["gpu"] says which renderer was really used.
-GPU_ARGS = ["--use-angle=vulkan", "--enable-features=Vulkan,VulkanFromANGLE,DefaultANGLEVulkan", "--enable-unsafe-webgpu",
-            "--enable-unsafe-swiftshader"] + _COMMON_ARGS
+# --disable-vulkan-surface: headless Chrome has no window surface to hand Vulkan (flags as in Google's headless WebGPU notebook).
+# The NVIDIA Vulkan driver comes from x3dlab.graphics.enable() on Colab.
+GPU_ARGS = ["--use-angle=vulkan", "--enable-features=Vulkan,VulkanFromANGLE,DefaultANGLEVulkan", "--disable-vulkan-surface",
+            "--enable-unsafe-webgpu", "--enable-unsafe-swiftshader"] + _COMMON_ARGS
 SOFTWARE_RENDERERS = ("swiftshader", "llvmpipe", "software", "softpipe")
 
 
