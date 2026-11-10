@@ -8,6 +8,9 @@ from . import scenegen, stress
 from .ui import esc, show
 
 VERSIONS = ["X3D33", "X3D40", "X3D41"]
+# The 02 panel edits the five lab tiers; the research tiers and presets belong to 03 (lab.research()).
+LAB_TIERS = ["validate", "roundtrip", "drift", "render", "load"]
+LAB_PRESETS = ["smoke", "standard", "heavy"]
 
 
 def _ints(text: str) -> list[int]:
@@ -32,13 +35,13 @@ class Panel:
         self.cfg = cfg or stress.RunConfig.preset_for("standard")
         L = lambda w="420px": W.Layout(width=w)  # noqa: E731
         st = {"description_width": "140px"}
-        self.preset = W.Dropdown(options=list(stress.PRESETS), value=self.cfg.preset, description="preset", style=st, layout=L("300px"))
+        self.preset = W.Dropdown(options=LAB_PRESETS + ([self.cfg.preset] if self.cfg.preset not in LAB_PRESETS else []), value=self.cfg.preset, description="preset", style=st, layout=L("300px"))
         self.seed = W.IntText(value=self.cfg.seed, description="seed", style=st, layout=L("260px"))
         self.name = W.Text(value=self.cfg.name, placeholder="(from the seed)", description="run name", style=st, layout=L("360px"))
         self.families = W.SelectMultiple(options=list(scenegen.FAMILIES), description="scene families", style=st, layout=L("360px"), rows=6)
         self.sizes = W.Text(description="sizes", style=st, layout=L("360px"))
         self.workers = W.IntSlider(min=1, max=12, description="Blender workers", style=st, layout=L("360px"))
-        self.on = {t: W.Checkbox(description=t, indent=False, layout=L("120px")) for t in stress.TIERS}
+        self.on = {t: W.Checkbox(description=t, indent=False, layout=L("120px")) for t in LAB_TIERS}
         self.rt_versions = W.SelectMultiple(options=VERSIONS, description="round-trip versions", style=st, rows=3, layout=L("360px"))
         self.dr_families = W.SelectMultiple(options=list(scenegen.FAMILIES), description="drift families", style=st, rows=6, layout=L("360px"))
         self.dr_versions = W.SelectMultiple(options=VERSIONS, description="drift versions", style=st, rows=3, layout=L("360px"))

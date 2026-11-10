@@ -45,6 +45,17 @@ def test_panel_builds_the_same_config():
     p = labui.Panel(cfg)
     out = p.config()
     assert out.tiers == cfg.tiers and out.sizes == cfg.sizes and out.seed == 5
+    # 02 cell 4 lists the enabled tiers over stress.TIERS, which also names the 03 research tiers
+    assert [t for t in stress.TIERS if out.tiers.get(t, {}).get("on")] == list(labui.LAB_TIERS)
+    assert set(p.on) == set(labui.LAB_TIERS) and "ci" not in p.preset.options
+
+
+def test_02_cell4_survives_research_tiers():
+    """The 02 Lab cell 4 line that crashed with KeyError 'matrix' once phase 3 extended stress.TIERS."""
+    src = (Path(__file__).parents[1] / "notebooks" / "src" / "02_lab.py").read_text()
+    line = next(l for l in src.splitlines() if l.startswith('print("run:"'))
+    cfg = stress.RunConfig.preset_for("smoke", gpu_kind="CPU")
+    exec(line, {"cfg": cfg, "stress": stress, "print": lambda *a, **k: None})
 
 
 @pytest.mark.skipif(not HAVE_BPY, reason="bpy wheel not installed (needs Python 3.13)")

@@ -76,7 +76,7 @@ panel = labui.panel(stress.RunConfig.preset_for(PRESET, seed=SEED))
 # %%
 #@title 4 · Run the stress test
 cfg = panel.config()
-print("run:", cfg.run_name(), "| tiers:", ", ".join(t for t in stress.TIERS if cfg.tiers[t]["on"]))
+print("run:", cfg.run_name(), "| tiers:", ", ".join(t for t in stress.TIERS if cfg.tiers.get(t, {}).get("on")))
 run = lab.stress(cfg)
 labui.show_run(run, lab)
 

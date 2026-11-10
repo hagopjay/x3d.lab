@@ -41,13 +41,13 @@
 SERVER = "hagopjay"  #@param ["hagopjay", "consortium"]
 TUNNEL = "none"  #@param ["none", "cloudflared", "ngrok"]
 #@markdown **none** = only this notebook can use the server (safest) · **cloudflared** = public address, no account · **ngrok** = public address, needs the `NGROK_AUTHTOKEN` secret
-print("✅ Options saved: server = %s, tunnel = %s. Next: the advanced settings (optional), then Install." % (SERVER, TUNNEL))
+print("✅ Options saved: server = %s, tunnel = %s. Next: run 1b (the defaults are fine), then Install." % (SERVER, TUNNEL))
 
 # %% [markdown]
 # ### Advanced settings: what each one does
 # <!-- collapsed -->
 #
-# Safe to skip: the defaults work. Change one, then run *Runtime › Run all* again (or at least the cells after it).
+# Run cell 1b even if you change nothing: the cells after it read these settings. The defaults work. Change one, then run *Runtime › Run all* again (or at least the cells after it).
 #
 # | Setting | Default | What it does | When to change it · gotchas |
 # |---|---|---|---|
@@ -65,7 +65,7 @@ print("✅ Options saved: server = %s, tunnel = %s. Next: the advanced settings 
 # | `MCP_PORT` / `PROXY_PORT` | 8000 / 8765 | where the server and the password-checking proxy listen, on this machine only | Change only if something else already uses the port. Nothing outside Colab can reach these ports directly. |
 
 # %%
-#@title 1b · Advanced settings (optional, safe to skip) { display-mode: "form" }
+#@title 1b · Advanced settings (run it; changing them is optional) { display-mode: "form" }
 PIN_MCP_BELOW_2 = True  #@param {type:"boolean"}
 REF = ""  #@param {type:"string"}
 TEST_THROUGH_TUNNEL = True  #@param {type:"boolean"}
