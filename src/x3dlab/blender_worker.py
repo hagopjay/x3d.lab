@@ -221,6 +221,16 @@ def set_backend(scn, backend):
     return backend, names
 
 
+def set_denoiser(scn, name, backend):
+    """Pick the denoiser; OpenImageDenoise runs on the GPU too where Blender supports it."""
+    try:
+        scn.cycles.denoiser = name
+    except Exception:
+        pass
+    if name == "OPENIMAGEDENOISE" and hasattr(scn.cycles, "denoising_use_gpu"):
+        scn.cycles.denoising_use_gpu = backend not in (None, "", "CPU")
+
+
 def frame_camera(scn, use_viewpoint=True):
     cams = [o for o in scn.objects if o.type == "CAMERA"]
     if use_viewpoint and cams:
@@ -250,12 +260,14 @@ def task_render(t):
     w, h = t.get("resolution", [640, 360])
     scn.render.resolution_x, scn.render.resolution_y, scn.render.resolution_percentage = int(w), int(h), 100
     scn.cycles.samples = int(t.get("samples", 32))
+    # Adaptive sampling (Blender's default) stops a pixel early once it looks clean, so "N samples" is a ceiling.
+    # The stress ladders turn it off so the samples ladder measures N samples; single renders keep Blender's default.
+    scn.cycles.use_adaptive_sampling = bool(t.get("adaptive", True))
     scn.cycles.use_denoising = bool(t.get("denoise", False))
-    if t.get("denoise") and backend == "OPTIX":
-        try:
-            scn.cycles.denoiser = "OPTIX"
-        except Exception:
-            pass
+    denoiser = None
+    if t.get("denoise"):
+        denoiser = "OPTIX" if backend == "OPTIX" else "OPENIMAGEDENOISE"
+        set_denoiser(scn, denoiser, backend)
     if scn.world is None:
         scn.world = bpy.data.worlds.new("lab_world")
     scn.world.use_nodes = True
@@ -274,7 +286,19 @@ def task_render(t):
     scn.render.filepath = t["out_png"]
     scn.render.image_settings.file_format = "PNG"
     t0 = time.time()
-    bpy.ops.render.render(write_still=True)
+    denoiser_note = ""
+    try:
+        bpy.ops.render.render(write_still=True)
+    except RuntimeError as exc:
+        # The OptiX denoiser needs a trained model shipped with the driver (nvoptix.bin); some containers, Colab's
+        # A100 among them, lack it, so the OptiX ray tracer works but its denoiser fails. Retry with OpenImageDenoise.
+        if denoiser != "OPTIX" or "denoiser" not in str(exc).lower():
+            raise
+        denoiser = "OPENIMAGEDENOISE"
+        set_denoiser(scn, denoiser, backend)
+        denoiser_note = "OptiX denoiser unavailable (%s); used OpenImageDenoise" % str(exc).strip().splitlines()[0][:80]
+        t0 = time.time()
+        bpy.ops.render.render(write_still=True)
     secs = time.time() - t0
     stats = {}
     try:                                                   # is anything on screen? (background colour vs the rest)
@@ -288,6 +312,7 @@ def task_render(t):
         stats = {"error": str(exc)[:120]}
     return {"backend": backend, "devices": devices, "camera": framing, "seconds": round(secs, 3), "import_s": round(ti, 3),
             "samples": scn.cycles.samples, "resolution": [int(w), int(h)], "png": t["out_png"],
+            "adaptive": scn.cycles.use_adaptive_sampling, "denoiser": denoiser, "denoiser_note": denoiser_note,
             "bytes": os.path.getsize(t["out_png"]) if os.path.exists(t["out_png"]) else 0, "pixels": stats,
             "counts": snapshot()["counts"], "camera_info": camera_info(scn)}
 
