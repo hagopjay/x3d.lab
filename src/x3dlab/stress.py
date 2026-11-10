@@ -256,6 +256,7 @@ def _render_tasks(run: StressRun, backend: str, label: str, items: list[tuple[st
         png = "render_%s_%s.png" % (label, case.replace(" ", "").replace("×", "x").replace("/", "-"))
         tasks.append({"kind": "render", "src": str(src), "out_png": str(run.dir / png), "backend": backend, "samples": samples,
                       "resolution": res, "denoise": run.cfg.tiers["render"].get("denoise", False), "camera": "viewpoint",
+                      "adaptive": bool(run.cfg.tiers["render"].get("adaptive", False)),
                       "_case": case, "_png": png})
     return tasks
 
@@ -294,12 +295,15 @@ def tier_render(run: StressRun, lab, bl) -> None:
                 gpu = bl.sampler.peak(task_t0(r, t0), time.time()) if be != "CPU" else {}
                 cov = (res.get("pixels") or {}).get("covered", 1)
                 fell_back = be != "CPU" and res.get("backend") == "CPU"
-                status = "WARN" if cov < 0.01 or fell_back else "PASS"
-                detail = "blank frame" if cov < 0.01 else ("asked for %s, rendered on CPU" % be if fell_back else "")
+                status = "WARN" if cov < 0.01 or fell_back or res.get("denoiser_note") else "PASS"
+                detail = "; ".join(x for x in ("blank frame" if cov < 0.01 else "",
+                                               "asked for %s, rendered on CPU" % be if fell_back else "",
+                                               res.get("denoiser_note") or "") if x)
                 px = res["resolution"][0] * res["resolution"][1]
                 m = {"seconds": res["seconds"], "samples": res["samples"], "resolution": res["resolution"], "backend": res["backend"],
                      "devices": res.get("devices"), "mpix_samples_per_s": round(px * res["samples"] / max(res["seconds"], 1e-6) / 1e6, 2),
-                     "vertices": res["counts"]["vertices"], "covered": cov, **gpu}
+                     "vertices": res["counts"]["vertices"], "covered": cov, "denoiser": res.get("denoiser"),
+                     "adaptive": res.get("adaptive"), **gpu}
                 run.add(Row("render", case, status, res["seconds"] * 1000, detail, m))
                 run.renders.append({"case": case, "url": run.file_url(task["_png"]), **m})
                 bus.emit("render ready: %s" % case, level="DEBUG", src="stress", kind="render", job=run.id,

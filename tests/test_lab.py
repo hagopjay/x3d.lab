@@ -1,6 +1,7 @@
 """02 Lab: scene families, the run config, presets, card comparison, and (when bpy is installed) Blender itself."""
 import importlib.util
 import json
+from pathlib import Path
 
 import pytest
 
@@ -72,3 +73,22 @@ def test_blender_reports_why_an_import_failed(lab, tmp_path):
     res = r["result"] or {}
     assert not r["ok"]
     assert "unclosed token" in res.get("reason", ""), res.get("reason")      # the old notebook said "import/export error: ?"
+
+
+def test_render_ladders_turn_off_adaptive_sampling(tmp_path, monkeypatch):
+    """Adaptive sampling stops pixels early, so the samples ladder only means N samples with it off."""
+    monkeypatch.setattr(stress.runtime, "sub", lambda *parts: tmp_path)
+    cfg = stress.RunConfig.preset_for("smoke", gpu_kind="CPU")
+    tasks = stress._render_tasks(stress.StressRun(cfg), "OPTIX", "optix_samples", [("16 spp", 4, 16, [480, 270])])
+    assert tasks[0]["adaptive"] is False and tasks[0]["denoise"] is False
+    cfg.tiers["render"]["adaptive"] = True
+    assert stress._render_tasks(stress.StressRun(cfg), "OPTIX", "x", [("16 spp", 4, 16, [480, 270])])[0]["adaptive"] is True
+
+
+def test_worker_retries_a_failed_optix_denoiser():
+    """The worker runs inside Blender, so check its source: the OptiX-denoiser failure seen on Colab's A100 is retried with OIDN."""
+    src = (Path(__file__).parents[1] / "src" / "x3dlab" / "blender_worker.py").read_text()
+    body = src[src.index("def task_render"):src.index("KINDS =")]
+    assert 'except RuntimeError' in body and '"denoiser" not in str(exc).lower()' in body
+    assert body.count("bpy.ops.render.render(write_still=True)") == 2 and 'set_denoiser(scn, denoiser, backend)' in body
+    assert '"denoiser": denoiser' in body and "use_adaptive_sampling" in body
