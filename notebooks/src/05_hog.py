@@ -52,10 +52,15 @@ print("Blender %s · best Cycles backend: %s · backends: %s" % (bl.version, bl.
 # %% [markdown]
 # ## 3 · Probe the machine
 #
-# What the engines will really get. Compute (CUDA, OptiX ray tracing) can work while the **graphics** half of NVIDIA's driver is missing from the container; then Chrome falls back to SwiftShader (WebGL on the CPU) and the OptiX *denoiser* cannot start. This cell says which, from the files that are actually there.
+# What the engines will really get. Compute (CUDA, OptiX ray tracing) can work while the **graphics** half of NVIDIA's driver is missing from the container; then Chrome falls back to SwiftShader (WebGL on the CPU) and the OptiX *denoiser* cannot start. `ENABLE_GRAPHICS` installs that half (`libnvidia-gl` at exactly your driver's version, plus `vulkan-tools`), the fix from Google's headless-Chrome WebGPU notebook; then this cell says what the engines really get, from the files that are actually there.
 
 # %%
 #@title 3 · Probe { display-mode: "form" }
+ENABLE_GRAPHICS = True  #@param {type:"boolean"}
+if ENABLE_GRAPHICS:                     # the graphics half of the NVIDIA driver: Vulkan for Chrome, nvoptix.bin for the denoiser
+    from x3dlab import graphics
+    ge = graphics.enable()
+    print("graphics:", ge.get("installed") or ge.get("skipped"), "| Vulkan devices:", (ge.get("after") or ge["before"])["vulkan_devices"] or "none")
 probe = hog.probe(lab)
 g = probe["graphics"]
 print("GPU:", g["gpu"] or "none", "| NVIDIA_DRIVER_CAPABILITIES:", g["driver_capabilities"])

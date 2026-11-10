@@ -162,3 +162,14 @@ Blender crashes are contained: tasks run in chunks of `blender_chunk` per proces
 | X_ITE | none: it loaded all 233 scenes, and draws the 4.1 nodes GaussianSplats, EnvironmentLight, RenderedTexture and Tangent | – |
 
 The HAnimPose scene first used `containerField="poses"`: the 4.1 XSD accepted it, the fork's semantic layer rejected it (HAnimHumanoid has no `poses` field in either UOM). That is the semantic layer doing its job; the corpus uses `children`, as `where_can_place` says.
+
+## 10. Giving headless Chrome the GPU on Colab (`x3dlab.graphics`)
+
+Colab's containers carry NVIDIA's compute userspace (CUDA, NVML, OptiX ray tracing) but not the graphics one: no Vulkan ICD, no GLX/EGL libraries, no OptiX denoiser model (`nvoptix.bin`). Chrome then falls back to SwiftShader, and Cycles' OptiX denoiser fails ("Failed to create OptiX denoiser", seen on the A100 on 10 Nov). The fix, from Google's [headless Chrome WebGPU notebook](https://developer.chrome.com/blog/supercharge-web-ai-testing): install `libnvidia-gl-<branch>` (it carries the Vulkan ICD and, in Ubuntu's and NVIDIA's packaging, `libnvoptix`/`nvoptix.bin`) plus `vulkan-tools`, then start Chrome with `--use-angle=vulkan --enable-features=Vulkan --disable-vulkan-surface --enable-unsafe-webgpu`.
+
+- `graphics.enable()` installs the package **only at exactly the driver's version** (`nvidia-smi` → e.g. `580.82.07` → `libnvidia-gl-580=580.82.07-*`, or the `-server` package). A mismatched userspace breaks the GPU for CUDA too, so there is no "closest version" fallback. Without an NVIDIA GPU, apt or root it changes nothing.
+- `browser.GPU_ARGS` now include `--disable-vulkan-surface`; without it headless Chrome cannot create a Vulkan surface and stays on SwiftShader.
+- `HogConfig.enable_graphics` (default on) runs it before the probe; notebook 05 step 3 has the switch.
+- Whether it also fixes the OptiX denoiser depends on the package shipping `nvoptix.bin` for that driver; the probe reports it. **Unverified on Colab** until the first run.
+
+`notebooks/00_GPU_Browser_Playground.ipynb` (Track A, no package) teaches the same thing hands-on: before/after, two Chromes side by side, editable WGSL. In this sandbox (no GPU) every step runs with both columns on SwiftShader; numbers there: WGSL matmul N=256 0.3 GFLOP/s, 100k triangles 1.5–1.6 s/frame, X_ITE 100 boxes ~85 frames/s uncapped.

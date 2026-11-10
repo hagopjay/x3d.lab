@@ -78,6 +78,7 @@ class HogConfig:
     max_items: int = 0                      # 0 = the whole corpus (handy to cap for a quick look)
     consortium: bool = False                # also judge with the upstream Web3DConsortium/x3d_mcp
     chrome_gpu: bool = True                 # try the GPU for X_ITE and the traces (falls back to SwiftShader by itself)
+    enable_graphics: bool = True            # install the matching NVIDIA graphics userspace first (x3dlab.graphics)
     blender: bool = True
     blender_versions: list = field(default_factory=lambda: ["X3D40", "X3D41"])
     render_samples: int = 16
@@ -129,6 +130,7 @@ class HogRun:
     traces: list = field(default_factory=list)
     findings: list = field(default_factory=list)
     timings: dict = field(default_factory=dict)       # stage -> seconds
+    probe_graphics_enable: dict = field(default_factory=dict)
     errors: dict = field(default_factory=dict)        # stage -> error text
 
     def file_url(self, name: str) -> str:
@@ -746,7 +748,12 @@ def run(lab, cfg: HogConfig | None = None, **kw) -> HogRun:
     loom_dir = {"path": None}
 
     def st_probe():
+        if cfg.enable_graphics:
+            from . import graphics
+            r.probe_graphics_enable = graphics.enable()
         r.probe = probe(lab)
+        if cfg.enable_graphics:
+            r.probe["graphics_enable"] = r.probe_graphics_enable
 
     def st_corpus():
         try:
