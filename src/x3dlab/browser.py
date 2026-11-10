@@ -32,11 +32,28 @@ from . import aio, pins
 from .events import bus
 
 ORIGIN = "https://x3dlab.invalid"
-CHROME_ARGS = ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist", "--no-sandbox",
-               "--disable-dev-shm-usage",
-               # several pages share one browser: a page in the background must not get throttled animation frames,
-               # or "first frames" measures Chrome's throttling instead of X_ITE
-               "--disable-background-timer-throttling", "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows"]
+_COMMON_ARGS = ["--ignore-gpu-blocklist", "--no-sandbox", "--disable-dev-shm-usage",
+                # several pages share one browser: a page in the background must not get throttled animation frames,
+                # or "first frames" measures Chrome's throttling instead of X_ITE
+                "--disable-background-timer-throttling", "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows"]
+# SwiftShader: WebGL drawn on the CPU. Identical on every machine, so correctness checks agree everywhere; timings are CPU timings.
+CHROME_ARGS = ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] + _COMMON_ARGS
+# GPU attempt: ANGLE on Vulkan, which needs the NVIDIA Vulkan driver (an ICD in /usr/share/vulkan/icd.d) inside the container.
+# Without it Chrome falls back to SwiftShader on its own; Browser.info["gpu"] says which renderer was really used.
+GPU_ARGS = ["--use-angle=vulkan", "--enable-features=Vulkan,VulkanFromANGLE,DefaultANGLEVulkan", "--enable-unsafe-webgpu",
+            "--enable-unsafe-swiftshader"] + _COMMON_ARGS
+SOFTWARE_RENDERERS = ("swiftshader", "llvmpipe", "software", "softpipe")
+
+
+def want_gpu(gpu: bool | None = None) -> bool:
+    """gpu=None follows $X3DLAB_CHROME_GPU (1/true/yes); the default is SwiftShader."""
+    if gpu is not None:
+        return bool(gpu)
+    return os.environ.get("X3DLAB_CHROME_GPU", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def is_software(renderer: str | None) -> bool:
+    return not renderer or any(s in renderer.lower() for s in SOFTWARE_RENDERERS)
 
 HARNESS = r"""<!doctype html><html><head><meta charset=utf-8>
 <link rel=stylesheet href="/xite/x_ite.css">
@@ -140,8 +157,10 @@ class Browser:
     """One headless Chromium, one harness page per viewport. All methods are coroutines; the sync wrappers below
     run them on the lab's background loop so notebook cells stay simple."""
 
-    def __init__(self, xite: Path, copilot: Path | None = None, viewport=(640, 360)):
+    def __init__(self, xite: Path, copilot: Path | None = None, viewport=(640, 360), gpu: bool | None = None):
         self.xite, self.copilot_dir, self.viewport = Path(xite), copilot, tuple(viewport)
+        self.gpu_requested = want_gpu(gpu)
+        self.assets: Path | None = None    # scenes' relative URLs (textures, fonts, inlines) resolve here
         self._pw = self._browser = self._ctx = None
         self._pages: dict = {}
         self._console: list = []
@@ -153,7 +172,7 @@ class Browser:
         from playwright.async_api import async_playwright
         self._pw = await async_playwright().start()
         exe = chromium_path()
-        self._browser = await self._pw.chromium.launch(headless=headless, args=CHROME_ARGS,
+        self._browser = await self._pw.chromium.launch(headless=headless, args=GPU_ARGS if self.gpu_requested else CHROME_ARGS,
                                                        **({"executable_path": exe} if exe else {}))
         self._ctx = await self._browser.new_context(viewport={"width": self.viewport[0], "height": self.viewport[1]},
                                                     device_scale_factor=1)
@@ -163,6 +182,10 @@ class Browser:
                      "webgl": await page.evaluate("""() => { const c = document.createElement('canvas').getContext('webgl2');
                          if (!c) return 'none'; const d = c.getExtension('WEBGL_debug_renderer_info');
                          return d ? c.getParameter(d.UNMASKED_RENDERER_WEBGL) : 'webgl2'; }""")}
+        self.info["gpu_requested"] = self.gpu_requested
+        self.info["gpu"] = not is_software(self.info["webgl"])
+        if self.gpu_requested and not self.info["gpu"]:
+            bus.warn("Chrome GPU mode requested but WebGL runs on %s: timings are CPU timings" % self.info["webgl"], src="browser")
         bus.info("headless Chromium %s · X_ITE %s · %s" % (self.info["chromium"], self.info["xite"], self.info["webgl"]),
                  src="browser", data=self.info)
         return self
@@ -179,6 +202,12 @@ class Browser:
 
     async def _serve(self, route) -> None:
         path = route.request.url[len(ORIGIN):].split("?")[0]
+        if self.assets is not None and path.startswith("/harness/") and not re.fullmatch(r"/harness/\d+x\d+", path):
+            f = (Path(self.assets) / path[len("/harness/"):]).resolve()
+            if Path(self.assets).resolve() in f.parents and f.is_file():
+                ctype = mimetypes.guess_type(str(f))[0] or "application/octet-stream"
+                return await route.fulfill(status=200, body=f.read_bytes(), content_type=ctype)
+            return await route.fulfill(status=404, body="not found")
         if path.startswith("/harness"):
             m = re.match(r"/harness/(\d+)x(\d+)", path)
             w, h = (int(m.group(1)), int(m.group(2))) if m else self.viewport
@@ -303,11 +332,13 @@ class Browser:
         aio.run(self.aclose(), 60)
 
 
-def start(copilot: str | Path | None = None, viewport=(640, 360), headless: bool = True, install: bool = True) -> Browser:
-    """Start the headless browser. `copilot`: a folder with the Copilot build (lab.copilot_dir) to enable that oracle."""
+def start(copilot: str | Path | None = None, viewport=(640, 360), headless: bool = True, install: bool = True,
+          gpu: bool | None = None) -> Browser:
+    """Start the headless browser. `copilot`: a folder with the Copilot build (lab.copilot_dir) to enable that oracle.
+    `gpu`: try the real GPU (ANGLE on Vulkan) instead of SwiftShader; None follows $X3DLAB_CHROME_GPU."""
     if install:
         ensure_playwright()
-    b = Browser(xite_dir(), Path(copilot) if copilot else None, viewport)
+    b = Browser(xite_dir(), Path(copilot) if copilot else None, viewport, gpu)
     return aio.run(b.astart(headless), 180)
 
 

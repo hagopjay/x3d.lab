@@ -158,6 +158,11 @@ class Lab:
         self.runs.append(run)
         return run
 
+    def hog(self, cfg=None, **kw):
+        """The GPU hog run: one corpus through every engine, findings per project (blocking). See x3dlab.hog."""
+        from . import hog
+        return hog.run(self, cfg, **kw)
+
     def duel(self, cfg=None, **kw):
         """Same prompts to several models; x3d_mcp scores every scene (blocking). See x3dlab.duel."""
         from . import duel
@@ -209,12 +214,13 @@ class Lab:
                  "accepted" if v.ok else "REJECTED (%s)" % v.report(2)), src="lab")
         return self.upstream_client
 
-    def start_browser(self, viewport=(640, 360)):
-        """Headless Chromium + X_ITE for the 03 notebook (the Copilot oracle too, when load_copilot() ran)."""
+    def start_browser(self, viewport=(640, 360), gpu: bool | None = None):
+        """Headless Chromium + X_ITE for the 03 notebook (the Copilot oracle too, when load_copilot() ran).
+        gpu=True tries the real GPU instead of SwiftShader; browser.info["gpu"] says what was used."""
         from . import browser as browser_mod
         if self.browser is not None:
             self.browser.close()
-        self.browser = browser_mod.start(copilot=self.copilot_dir, viewport=viewport)
+        self.browser = browser_mod.start(copilot=self.copilot_dir, viewport=viewport, gpu=gpu)
         return self.browser
 
     def down(self) -> None:
