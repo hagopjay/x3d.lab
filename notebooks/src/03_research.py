@@ -182,7 +182,7 @@ x3dlab.keys.widget()
 
 # %%
 #@title 8b · Run the agent { display-mode: "form" }
-PROVIDER = "auto"  #@param ["auto", "anthropic", "openai", "gemini"]
+PROVIDER = "auto"  #@param ["auto", "anthropic", "openai", "gemini", "nvidia"]
 MODEL = ""  #@param {type:"string"}
 SCENE = "fuzz bucket"  #@param ["fuzz bucket", "break-it: route_types", "break-it: key_mismatch", "break-it: pbr_no_component", "lantern (already valid)"]
 DEVTOOLS = "auto"  #@param ["auto", "npx", "playwright"]

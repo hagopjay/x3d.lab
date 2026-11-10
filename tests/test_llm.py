@@ -143,3 +143,103 @@ def test_model_id_cannot_reach_other_paths():
         with pytest.raises(ValueError):
             llm.conversation("gemini", "k", bad)
     assert llm.conversation("gemini", "k", "gemini-3.8-flash").model == "gemini-3.8-flash"
+
+
+# ---------------------------------------------------------------------- NVIDIA (build.nvidia.com)
+NV_MODELS = {"object": "list", "data": [
+    {"id": "meta/llama-3.3-70b-instruct", "object": "model", "owned_by": "meta"},
+    {"id": "nvidia/nemotron-3-super-120b-a12b", "object": "model", "owned_by": "nvidia"},
+    {"id": "nvidia/nv-embedqa-e5-v5", "object": "model"},
+    {"id": "nvidia/llama-3.1-nemoguard-8b-content-safety", "object": "model"},
+    {"id": "nvidia/llama-3.1-nemotron-70b-reward", "object": "model"},
+    {"id": "baai/bge-m3", "object": "model"},
+    {"id": "../../evil", "object": "model"},
+    {"id": "mistralai/mistral-small-24b-instruct", "object": "model"}]}
+
+
+@pytest.fixture()
+def nv_unpaced(monkeypatch):
+    monkeypatch.setenv("X3DLAB_NVIDIA_RPM", "0")
+
+
+def test_nvidia_tool_round_trip(nv_unpaced):
+    s = Script(
+        (200, {"model": "meta/llama-3.3-70b-instruct", "choices": [{"finish_reason": "tool_calls", "message": {
+               "role": "assistant", "content": None, "tool_calls": [{"id": "chatcmpl-tool-1", "type": "function",
+               "function": {"name": "describe_node", "arguments": "{\"node_type\": \"Box\"}"}}]}}],
+               "usage": {"prompt_tokens": 12, "completion_tokens": 4}}),
+        (200, {"model": "meta/llama-3.3-70b-instruct", "choices": [{"finish_reason": "stop", "message": {
+               "role": "assistant", "content": "<think>The user wants a box.</think>\n<X3D/>"}}],
+               "usage": {"prompt_tokens": 30, "completion_tokens": 9}}))
+    c = llm.conversation("nvidia", "nvapi-test", "meta/llama-3.3-70b-instruct", system="sys", tools=TOOLS,
+                         transport=httpx.MockTransport(s))
+    r = c.send("hi")
+    assert str(s.requests[0].url) == "https://integrate.api.nvidia.com/v1/chat/completions"
+    assert s.requests[0].headers["authorization"] == "Bearer nvapi-test"
+    b0 = s.body(0)
+    assert b0["model"] == "meta/llama-3.3-70b-instruct" and b0["max_tokens"] == 8192 and "max_completion_tokens" not in b0
+    assert b0["tools"][0]["function"]["name"] == "describe_node" and "title" not in json.dumps(b0["tools"])
+    assert r.tool_calls[0].args == {"node_type": "Box"}
+    r2 = c.send_tool_results([(r.tool_calls[0], "Box has size")])
+    assert s.body(1)["messages"][-1] == {"role": "tool", "tool_call_id": "chatcmpl-tool-1", "content": "Box has size"}
+    assert r2.text == "<X3D/>"                       # the <think> block never reaches the scene text
+    assert c.usage == {"input": 42, "output": 13, "calls": 2}
+
+
+def test_nvidia_halves_max_tokens_once_when_refused(nv_unpaced):
+    s = Script((400, {"detail": "max_tokens must be less than or equal to 4096"}),
+               (200, {"choices": [{"message": {"role": "assistant", "content": "<X3D/>"}, "finish_reason": "stop"}]}))
+    c = llm.conversation("nvidia", "k", "meta/llama-3.3-70b-instruct", transport=httpx.MockTransport(s))
+    assert c.send("hi").text == "<X3D/>"
+    assert s.body(0)["max_tokens"] == 8192 and s.body(1)["max_tokens"] == 4096
+
+
+def test_nvidia_retries_429_more_patiently(nv_unpaced):
+    s = Script(*[(429, {"detail": "Too Many Requests"})] * 5, (200, {"data": NV_MODELS["data"][:1]}))
+    ms = llm.list_models("nvidia", "k", transport=httpx.MockTransport(s))
+    assert [m.id for m in ms] == ["meta/llama-3.3-70b-instruct"] and len(s.requests) == 6
+
+
+def test_nvidia_model_list_filters_and_default(nv_unpaced):
+    ms = llm.list_models("nvidia", "k", transport=httpx.MockTransport(Script((200, NV_MODELS))))
+    ids = [m.id for m in ms]
+    assert ids == ["meta/llama-3.3-70b-instruct", "mistralai/mistral-small-24b-instruct", "nvidia/nemotron-3-super-120b-a12b"]
+    assert llm.default_model("nvidia", ms) == "nvidia/nemotron-3-super-120b-a12b"
+    assert llm.nvidia_default(["meta/llama-3.3-70b-instruct", "x/y-chat"]) == "meta/llama-3.3-70b-instruct"
+    assert llm.nvidia_default(["x/only-model"]) == "x/only-model" and llm.nvidia_default([]) is None
+
+
+def test_nvidia_model_ids():
+    for ok in ("meta/llama-3.3-70b-instruct", "nvidia/nemotron-3-super-120b-a12b", "qwen/qwen3-235b-a22b:fp8"):
+        assert llm.conversation("nvidia", "k", ok).model == ok
+    for bad in ("../x", "a/../b", "a/b/c", "/abs", "a b/c", ""):
+        with pytest.raises(ValueError):
+            llm.conversation("nvidia", "k", bad)
+    with pytest.raises(ValueError):                   # slashes stay forbidden where the id goes into a URL path
+        llm.conversation("gemini", "k", "meta/llama-3.3-70b-instruct")
+
+
+def test_pacing_spaces_requests(monkeypatch):
+    slept, clock = [], [100.0]
+    monkeypatch.setattr(llm.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(llm.time, "sleep", lambda s: slept.append(round(s, 2)))
+    monkeypatch.setenv("X3DLAB_NVIDIA_RPM", "60")
+    llm._next_slot.pop("nvidia", None)
+    for _ in range(3):
+        llm._pace("nvidia")
+    assert slept == [1.0, 2.0]                         # one per second at 60 rpm, no wait for the first
+    monkeypatch.setenv("X3DLAB_NVIDIA_RPM", "0")
+    llm._pace("nvidia")
+    assert slept == [1.0, 2.0]
+    assert llm._rpm("openai") is None
+
+
+def test_keys_know_nvidia(monkeypatch):
+    from x3dlab import keys
+    monkeypatch.setenv("NGC_API_KEY", "nvapi-from-env")
+    try:
+        assert keys.get_key("nvidia") == "nvapi-from-env" and "nvidia" in keys.available()
+        assert keys.HINTS["nvidia"] == "nvapi-..." and keys.public_status()["nvidia"]["has_key"]
+        assert "nvapi-from-env" not in json.dumps(keys.public_status())
+    finally:
+        keys.set_key("nvidia", None)

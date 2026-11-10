@@ -40,6 +40,7 @@ On a system Python that refuses pip installs add `--break-system-packages` (**ra
 |---|---|---|
 | 00 Basic MCP | `python tools/run_basic.py [--installer uv\|pip] [--slow] [--server hagopjay]` | venv: 109 pass / 0 fail / 0 warn / 2 skip (uv) and same (pip); `--slow`: 111 / 0 / 0 / 0 |
 | 00 MCP Starter | executed headless with nbclient + a kernel on the venv interpreter | 0 error outputs, 10 HTML displays, "Caught all 15 broken scenes"; PASS/WARN counts not extracted (unverified) |
+| 04 Model Duel | executed headless with nbclient, no keys (only `sample` runs; the others are listed as skipped) | 0 error outputs; sample: 1/6 valid as written, 2/6 after server fixes, 6/6 after the stand-in's repair |
 | 01 / 02 / 03 | open in Colab (badges in README); locally their code lives in `src/x3dlab` and is covered by `pytest` | not executed end to end here (Colab-specific cells) |
 
 `tools/run_basic.py` exit codes: 0 ok, 1 FAIL rows / notebook error / no network, 2 usage. Tunnel steps are skipped, not failed, when `NGROK_AUTHTOKEN` is unset or github.com is unreachable.
@@ -115,3 +116,26 @@ Gate names are the owner's roadmap (Unblock, Fidelity core, One file two engines
 3. **Fidelity core** (1 day): run the `blender` job (needs `bpy==5.2.3`, Python 3.13); the 2 skipped local tests depend on it; X3D 3.3 clamps light intensity and 4.x loses DEF/USE (docs/ROADMAP.md findings).
 4. **One file, two engines** (days): X_ITE vs Cycles silhouettes are in 03 Research; bump X_ITE pin 16.7.0 to 16.7.1 only with the browser tests as the gate.
 5. **Reach** (days): revisit `mcp<2` (fork imports `mcp.server.fastmcp`, removed in mcp 2.x); add a nightly job that runs `run_basic.py --server consortium` to notice when upstream moves; keep the two known upstream gaps (ROUTE before DEF, PBR outside the profile, per the Starter notebook) as expected FAILs.
+
+## 8. Model providers and the duel
+
+`x3dlab.llm` speaks four providers over plain HTTPS: `anthropic`, `openai`, `gemini` and `nvidia`. Keys come from the keys widget or Colab Secrets (`NVIDIA_API_KEY`, also `NGC_API_KEY` or `NVAPI_KEY`) and are redacted from every log, card and dashboard event.
+
+**NVIDIA (build.nvidia.com)** is the OpenAI chat-completions API at `https://integrate.api.nvidia.com/v1`. What differs, and how the adapter handles it:
+
+| Difference | Handling |
+|---|---|
+| model ids are `org/model` (`meta/llama-3.3-70b-instruct`) | allowed for `nvidia` only (they go in the JSON body); Gemini ids still may not contain `/`, because they go into a URL path |
+| the catalog lists embedding, reranking, safety and reward models too | filtered out of the model list |
+| model names rotate | the list comes live from `/v1/models`; the default is the first family present in `llm.NVIDIA_PREFERENCE` (Nemotron 3 Super, Llama 3.3 Nemotron Super, Llama 3.3 70B, ...). Tool calling per model is **unverified** |
+| `max_tokens`, not `max_completion_tokens`; hosted models cap it | 8192 by default; a 400 that names `max_tokens` halves it once |
+| reasoning models think in `<think>` tags | stripped before the text is used |
+| free tier about 40 requests per minute | requests are spaced to 36 per minute per kernel (`X3DLAB_NVIDIA_RPM`, `0` = no limit); 429s are retried 5 times, honouring `retry-after` |
+
+Not exercised against the live endpoint from this sandbox (its network allowlist does not reach nvidia.com); the first Colab run with a real key is the test.
+
+**The duel** (`x3dlab.duel`, notebook 04, `lab.duel(cfg)`): the same prompts to each contender; per scene draft → `validate_x3d` + `validate_semantic` → `repair_x3d` (no model) → up to `rounds` model repairs from the validator's report and `exact_fix_hints`. Every error is given a *kind*: XSD messages by pattern (`boolean-case`, `unknown-field`, `node-not-allowed`, `value-format`, ...), semantic errors by their rule id. Output: `out/duel_<id>/duel_card.json`, `report.html`, and every draft and final scene under `scenes/`.
+
+Finding from the `sample` contender (the lantern with one known defect per prompt, pinned server `13121b6`): `repair_x3d` fixed **1 of 11** defect kinds on its own (the missing PhysicalMaterial component); the other ten, including `solid="True"`, needed a model. That matches the 00 Starter's WARN rows for `autofix_x3d` / `repair_x3d`.
+
+Cost control: `duel.estimate(cfg)` gives best and worst-case request counts before anything is sent, and the run refuses to start above `max_requests` (default 200; the notebook sets 120).
