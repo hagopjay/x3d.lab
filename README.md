@@ -29,7 +29,7 @@ The official project is [Web3DConsortium/x3d_mcp](https://github.com/Web3DConsor
 
 ```
                   ┌──────────────── Colab VM ────────────────┐
-your browser ◄──┐ │  gateway :8080  ── /mcp ──►  x3d_mcp :8000 │
+your browser ◄──┐ │  gateway :8765  ── /mcp ──►  x3d_mcp :8000 │
 (Colab proxy)   ├─┤  dashboard, API, event stream   (localhost) │
 your phone   ◄──┤ │  jobs (model calls, validation)             │
 Claude Code  ◄──┘ │  Blender workers, headless Chrome (02, 03)  │

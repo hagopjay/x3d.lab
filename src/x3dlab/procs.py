@@ -117,6 +117,20 @@ def _alive(pid: int) -> bool:
         return True
 
 
+# Services of the machine we run on. Colab's web app (/datalab/web/app.js) listens on 8080 and Jupyter on 9000;
+# stopping either disconnects the runtime, so free_port refuses instead.
+HOST_SERVICES = ("/datalab/", "jupyter", "colab_kernel_launcher", "ipykernel")
+
+
+def _is_host_service(pid: int) -> bool:
+    try:
+        import psutil
+        cmd = " ".join(psutil.Process(pid).cmdline())
+    except Exception:
+        return False
+    return any(k in cmd for k in HOST_SERVICES)
+
+
 def free_port(port: int) -> list[int]:
     """Stop whatever listens on `port`. Returns the PIDs that were stopped."""
     stopped = []
@@ -132,6 +146,9 @@ def free_port(port: int) -> list[int]:
         if pid == me:
             bus.warn("port %d is held by this kernel but no in-process server is registered; leaving it" % port, src="procs")
             continue
+        if _is_host_service(pid):
+            raise RuntimeError("port %d belongs to the host (pid %d, e.g. Colab's web app on 8080); "
+                               "choose another port instead of stopping it" % (port, pid))
         bus.info("freeing port %d: stopping pid %d (left over from an earlier run)" % (port, pid), src="procs")
         _kill(pid)
         stopped.append(pid)

@@ -31,7 +31,7 @@ SERVERS = {
     "consortium": {"repo": "Web3DConsortium/x3d_mcp", "ref": "main"},
 }
 MCP_PORT = 8000      # the server itself, on 127.0.0.1 only
-PROXY_PORT = 8080    # the token-checking proxy that a tunnel points at
+PROXY_PORT = 8765    # the token-checking proxy that a tunnel points at
 CLOUDFLARED_VERSION = "2026.10.7"
 
 import os
@@ -94,8 +94,19 @@ import psutil
 def listeners(port):
     return {c.pid for c in psutil.net_connections("tcp") if c.status == "LISTEN" and c.laddr.port == port and c.pid}
 
+# Colab's own services listen on this machine too (its web app on 8080, Jupyter on 9000): stopping one disconnects the runtime.
+COLAB_SERVICES = ("/datalab/", "jupyter", "colab_kernel_launcher", "ipykernel")
+
+def is_colab_service(pid):
+    try:
+        return any(k in " ".join(psutil.Process(pid).cmdline()) for k in COLAB_SERVICES)
+    except psutil.Error:
+        return False
+
 def free_port(port):
     for pid in listeners(port) - {os.getpid()}:
+        if is_colab_service(pid):
+            raise RuntimeError("Port %d belongs to Colab itself (pid %d). Pick another port." % (port, pid))
         print("stopping pid %d left on port %d" % (pid, port))
         try:
             psutil.Process(pid).terminate(); psutil.Process(pid).wait(5)
@@ -164,7 +175,7 @@ print("server pid %d is up in %.1f s: %s" % (server.pid, time.time() - t0, pulse
 # %% [markdown]
 # ## 4 · Expose it
 #
-# A small proxy on port 8080 sits in front of the server. It forwards everything to `127.0.0.1:8000` but only with `Authorization: Bearer <token>`; the token is new every run. The tunnel points at the proxy, never at the server.
+# A small proxy on port 8765 sits in front of the server. It forwards everything to `127.0.0.1:8000` but only with `Authorization: Bearer <token>`; the token is new every run. The tunnel points at the proxy, never at the server.
 #
 # | `TUNNEL` | Reachable by | Needs |
 # |---|---|---|

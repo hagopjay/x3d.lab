@@ -62,7 +62,7 @@ print("✅ Options saved: server = %s, tunnel = %s. Next: the advanced settings 
 # | `NGROK_DOMAIN` | empty | a fixed ngrok address such as `my-name.ngrok-free.app` | Every free ngrok account gets one static domain: claim it at [dashboard.ngrok.com/domains](https://dashboard.ngrok.com/domains). Empty = a random address each time. |
 # | `SHOW_3D` | on | shows scenes live in the notebook (drag to turn, scroll to zoom) with the X_ITE browser | X_ITE loads from the jsdelivr CDN into *your* browser, not into Colab. Turn it off on slow connections or if your browser blocks it; the tests don't need it. |
 # | `VERBOSE` | off | prints every proxied request, package versions, the server's status JSON and every test line | Turn on when something fails. |
-# | `MCP_PORT` / `PROXY_PORT` | 8000 / 8080 | where the server and the password-checking proxy listen, on this machine only | Change only if something else already uses the port. Nothing outside Colab can reach these ports directly. |
+# | `MCP_PORT` / `PROXY_PORT` | 8000 / 8765 | where the server and the password-checking proxy listen, on this machine only | Change only if something else already uses the port. Nothing outside Colab can reach these ports directly. |
 
 # %%
 #@title 1b · Advanced settings (optional, safe to skip) { display-mode: "form" }
@@ -78,7 +78,7 @@ NGROK_DOMAIN = ""  #@param {type:"string"}
 SHOW_3D = True  #@param {type:"boolean"}
 VERBOSE = False  #@param {type:"boolean"}
 MCP_PORT = 8000  #@param {type:"integer"}
-PROXY_PORT = 8080  #@param {type:"integer"}
+PROXY_PORT = 8765  #@param {type:"integer"}
 
 # The only place the two servers differ. "ref" is a commit, branch or tag.
 SERVERS = {
@@ -159,9 +159,20 @@ def listeners(port):
     """Process ids listening on a TCP port of this machine."""
     return {c.pid for c in psutil.net_connections("tcp") if c.status == "LISTEN" and c.laddr.port == port and c.pid}
 
+# Colab's own services listen on this machine too (its web app on 8080, Jupyter on 9000): stopping one disconnects the runtime.
+COLAB_SERVICES = ("/datalab/", "jupyter", "colab_kernel_launcher", "ipykernel")
+
+def is_colab_service(pid):
+    try:
+        return any(k in " ".join(psutil.Process(pid).cmdline()) for k in COLAB_SERVICES)
+    except psutil.Error:
+        return False
+
 def free_port(port):
     """Stop any *other* process that is listening on `port` (never this notebook itself)."""
     for pid in listeners(port) - {os.getpid()}:
+        if is_colab_service(pid):
+            raise RuntimeError("Port %d belongs to Colab itself (pid %d). Pick another port in 1b." % (port, pid))
         print("   stopping old process %d on port %d" % (pid, port))
         try:
             p = psutil.Process(pid)
@@ -250,11 +261,11 @@ if VERBOSE:
 # %% [markdown]
 # ## 4 · Connect other apps
 #
-# **Always run this cell**, even with `TUNNEL = none`: the tests in section 5 also go through the gatekeeper. A small **proxy** (a gatekeeper) on port 8080 sits in front of the server. It lets a request through only if it carries the password: `Authorization: Bearer <token>`. The token is random and new for each runtime. A tunnel, if you chose one, points at the proxy, never at the server itself.
+# **Always run this cell**, even with `TUNNEL = none`: the tests in section 5 also go through the gatekeeper. A small **proxy** (a gatekeeper) on port 8765 sits in front of the server. It lets a request through only if it carries the password: `Authorization: Bearer <token>`. The token is random and new for each runtime. A tunnel, if you chose one, points at the proxy, never at the server itself.
 #
 # | `TUNNEL` | Who can use the server | Address | Needs | Good to know |
 # |---|---|---|---|---|
-# | `none` | code in this notebook | `http://127.0.0.1:8080/mcp` | nothing | Safest. Colab's own "open port" links need your Google login, which MCP apps do not have, so they can't be used here. |
+# | `none` | code in this notebook | `http://127.0.0.1:8765/mcp` | nothing | Safest. Colab's own "open port" links need your Google login, which MCP apps do not have, so they can't be used here. |
 # | `cloudflared` | any MCP app, anywhere | random `https://….trycloudflare.com/mcp`, new each time | nothing | Cloudflare's free *quick tunnel*: no account, no uptime promise, about 100 s per request at most (plenty for these tools). Starting many in a row can be refused for a minute (429). |
 # | `ngrok` | any MCP app, anywhere | random, or your fixed `NGROK_DOMAIN` | Colab secret `NGROK_AUTHTOKEN` | Use your **authtoken** ([dashboard › Your Authtoken](https://dashboard.ngrok.com/get-started/your-authtoken)), **not** an API key: API keys are for ngrok's REST API and are refused here (`ERR_NGROK_105`). The free plan runs one ngrok agent at a time across all your machines (`ERR_NGROK_108`). |
 #
