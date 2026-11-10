@@ -398,7 +398,7 @@ def create_app(lab) -> FastAPI:
 class GatewayServer:
     """uvicorn in a daemon thread of this kernel, so the dashboard shares the event bus with the notebook."""
 
-    def __init__(self, asgi_app, host: str = "127.0.0.1", port: int = 8080):
+    def __init__(self, asgi_app, host: str = "127.0.0.1", port: int = 8765):
         self.app, self.host, self.port = asgi_app, host, port
         self.server = None
         self.thread: threading.Thread | None = None

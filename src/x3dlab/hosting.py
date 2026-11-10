@@ -43,7 +43,7 @@ class Lab:
     mcp_token: str
     blob_token: str
     mcp_port: int = 8000
-    gateway_port: int = 8080
+    gateway_port: int = 8765
     gateway_host: str = "127.0.0.1"
     expose_mcp: bool = True
     xite_src: str = ""
@@ -383,7 +383,7 @@ def _card_html(lab: Lab) -> str:
 
 # ---------------------------------------------------------------------- up()
 def up(tunnel: str = "none", *, expose_mcp: bool = True, show: str = "link", log_level: str = "INFO",
-       log_density: str = "compact", log_to_screen: bool = True, mcp_port: int = 8000, gateway_port: int = 8080,
+       log_density: str = "compact", log_to_screen: bool = True, mcp_port: int = 8000, gateway_port: int = 8765,
        gateway_host: str = "127.0.0.1", xite: str = "cdn", max_llm_runs: int = 30, ngrok_domain: str | None = None,
        panel: bool = True) -> Lab:
     """Start everything for cell 1 and return the Lab handle. Safe to rerun: old servers are replaced."""

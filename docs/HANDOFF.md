@@ -58,13 +58,13 @@ The new `basic-mcp.yml` is valid YAML (parsed locally) but has **not run on GitH
 
 ## 5. Tunnels (Track A, from the code in `00_basic_mcp.py` / `00_starter.py`)
 
-Both notebooks run the server with `MCP_TRANSPORT=streamable-http` on 127.0.0.1:8000 and a token-checking proxy on 127.0.0.1:8080. The tunnel always points at the proxy. **Neither notebook uses SSE for MCP**: the only endpoint is `/mcp` (streamable HTTP). SSE appears only in the x3dlab event stream (Track B dashboard). Clients must choose "Streamable HTTP", not "SSE".
+Both notebooks run the server with `MCP_TRANSPORT=streamable-http` on 127.0.0.1:8000 and a token-checking proxy on 127.0.0.1:8765. The tunnel always points at the proxy. **Neither notebook uses SSE for MCP**: the only endpoint is `/mcp` (streamable HTTP). SSE appears only in the x3dlab event stream (Track B dashboard). Clients must choose "Streamable HTTP", not "SSE".
 
 ### Exposure options compared
 
 | Option | Reachable by | Auth needed | URL | Carries | Limits (source) | Use when |
 |---|---|---|---|---|---|---|
-| `TUNNEL="none"` (127.0.0.1 only) | code in the kernel | none | `http://127.0.0.1:8080/mcp` | streamable HTTP | none | smoke tests, headless render |
+| `TUNNEL="none"` (127.0.0.1 only) | code in the kernel | none | `http://127.0.0.1:8765/mcp` | streamable HTTP | none | smoke tests, headless render |
 | Colab port proxy | only your signed-in browser | your Google login (notebook text, code) | `google.colab.kernel.proxyPort(port)` (used by Track B `hosting.py`; not by Track A) | HTTP for a browser; **not usable by a remote MCP client** (Starter text: it needs your Google cookie) | Colab only | looking at a served page or directory yourself, a browser-based MCP Inspector (unverified) |
 | `files.download(REPORT_PATH)` | your browser | Colab | n/a | the JSON report | Colab only, no-op error is swallowed outside Colab (code) | taking artifacts home |
 | `cloudflared` (quick tunnel) | any client | none | random `https://*.trycloudflare.com`, new every run | HTTP incl. streaming | "no uptime promise, about 100 s per request", 429 when starting many in a row (Starter text, not verified by us) | quick remote test, no account |
