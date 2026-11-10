@@ -139,3 +139,26 @@ Not exercised against the live endpoint from this sandbox (its network allowlist
 Finding from the `sample` contender (the lantern with one known defect per prompt, pinned server `13121b6`): `repair_x3d` fixed **1 of 11** defect kinds on its own (the missing PhysicalMaterial component); the other ten, including `solid="True"`, needed a model. That matches the 00 Starter's WARN rows for `autofix_x3d` / `repair_x3d`.
 
 Cost control: `duel.estimate(cfg)` gives best and worst-case request counts before anything is sent, and the run refuses to start above `max_requests` (default 200; the notebook sets 120).
+
+## 9. The GPU hog run (notebook 05, `x3dlab.hog`, `lab.hog(cfg)`)
+
+Stages, each switchable: **probe** (GPU, driver, the graphics libraries Chrome and the OptiX denoiser need, Cycles backends, Chrome's renderer in SwiftShader and GPU mode) · **corpus** (x3d.loom's bridge fixtures at a pinned commit, the 7 node types X3D 4.1 adds, the lab's scenes; every scene as 4.0 and 4.1) · **matrix** (x3d_mcp fork, lxml with the version's own XSD, optional upstream, X_ITE with coverage, Blender import, round trip to X3D40/X3D41 with the export re-validated, Cycles coverage) · **loom** (its `run-tests.js`: bridge reader + Babylon vs X_ITE) · **stress** (heavy preset, GPU only, after a measured warm-up) · **traces** (pagoda cold and warm, meshes of growing size) · **findings** (rules → per-project findings and `issues/<project>.md`).
+
+**Chrome on the GPU.** `browser.py` always forced SwiftShader (`--use-angle=swiftshader`), so every X_ITE timing so far was a CPU timing, on any runtime. `lab.start_browser(gpu=True)` or `X3DLAB_CHROME_GPU=1` now tries ANGLE on Vulkan; `browser.info["gpu"]` says whether it got a hardware renderer. It needs the NVIDIA Vulkan ICD inside the container; the probe reports whether it is there. **Unverified on Colab.**
+
+Blender crashes are contained: tasks run in chunks of `blender_chunk` per process; a chunk that dies is re-run task by task, so the scene that kills Blender is named.
+
+### Findings from the sandbox preview (validators + X_ITE + loom; no Blender, SwiftShader; 233 scenes, 10 Nov 2026)
+
+| Project | Finding | Scenes |
+|---|---|---|
+| x3d_mcp | `index-out-of-range` on the `-1` separator of IndexedTriangleFanSet / IndexedTriangleStripSet: a false positive (the -1 ends a fan or strip) | 4 |
+| x3d_mcp | the `profile-component` message says X_ITE refuses such scenes; X_ITE 16.7.0 loaded all 64 | 64 |
+| x3d_mcp / X3D XSD | **ComposedTexture3D**: in both the 4.0 and 4.1 XSD its texture content is an `xs:sequence` (ImageTexture, PixelTexture, MovieTexture) where it should be an `xs:choice`, so ordinary 3D textures are rejected; the UOM accepts any X3DTexture2DNode | 2 |
+| x3d_mcp / X3D XSD | **LayoutGroup** inside Group is rejected by both XSDs; the UOM allows it | 2 |
+| x3d_mcp / X3D 4.1 XSD | **InlineGeometry** (Shape.geometry) and **RenderedTexture** (Appearance.texture) are missing from the 4.1 XSD's content models though the 4.1 UOM places them there | 2 |
+| x3d.loom | 64 fixtures use nodes outside `profile="Immersive"` without a `<component>` declaration | 64 |
+| x3d.loom | 8 bridge failures (X_ITE passes all 8 on the same rig, so they are bridge defects, not rig differences): PlaneSensor and SphereSensor drag ~3.7× too short (one shared pointer-to-world scale), QuadSet and StaticGroup not pickable, ScreenGroup / TextureBackground / Viewport not drawn or not clipped, SpatialSound gain and panning slightly off | 8 |
+| X_ITE | none: it loaded all 233 scenes, and draws the 4.1 nodes GaussianSplats, EnvironmentLight, RenderedTexture and Tangent | – |
+
+The HAnimPose scene first used `containerField="poses"`: the 4.1 XSD accepted it, the fork's semantic layer rejected it (HAnimHumanoid has no `poses` field in either UOM). That is the semantic layer doing its job; the corpus uses `children`, as `where_can_place` says.

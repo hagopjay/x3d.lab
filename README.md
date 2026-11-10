@@ -7,7 +7,7 @@ Colab notebooks and a shared toolkit for authoring and testing [X3D](https://www
 | Track | Notebooks | Needs the `x3dlab` package? | Use it for |
 |---|---|---|---|
 | **A · Plain MCP** (start here) | 00 MCP Starter, 00 Basic MCP | No. All code is in the cells; `python tools/run_basic.py` checks there is no `x3dlab` reference | Install an X3D MCP server, test it on 127.0.0.1, optionally expose it through a Cloudflare quick tunnel or ngrok behind a bearer token |
-| **B · x3dlab kit** | 01 Quickstart, 02 Lab, 03 Research, 04 Model Duel | Yes: they clone this repo (`LAB_REPO` in each source) and import `src/x3dlab/` | Dashboard, Blender round trips, fuzzing, the regression gate |
+| **B · x3dlab kit** | 01 Quickstart, 02 Lab, 03 Research, 04 Model Duel, 05 GPU Hog | Yes: they clone this repo (`LAB_REPO` in each source) and import `src/x3dlab/` | Dashboard, Blender round trips, fuzzing, the regression gate |
 
 Local runbook (outside Colab): [docs/HANDOFF.md](docs/HANDOFF.md).
 
@@ -19,8 +19,9 @@ Local runbook (outside Colab): [docs/HANDOFF.md](docs/HANDOFF.md).
 | [02 Lab](notebooks/02_Lab.ipynb) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hagopjay/x3d.lab/blob/main/notebooks/02_Lab.ipynb) | intermediate: X3D ↔ Blender round trips measured object by object (3.3 / 4.0 / 4.1), multi-generation drift, Cycles render ladders on the GPU with peak VRAM, MCP load, a control panel with JSON configs and seeds, run cards you can compare | L4 or G4 (CPU works, smaller) | ready |
 | [03 Research](notebooks/03_Research.ipynb) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hagopjay/x3d.lab/blob/main/notebooks/03_Research.ipynb) | advanced: differential fuzzing from the X3D object model with minimised reproducers, a six-oracle matrix (fork, consortium, a second XSD engine, X_ITE, Copilot, Blender), X_ITE vs Cycles silhouettes, scale to millions of vertices, Chrome traces, one model driving x3d_mcp *and* chrome-devtools-mcp, and the regression gate CI runs | L4 or G4 (CPU works, smaller) | ready |
 | [04 Model Duel](notebooks/04_Model_Duel.ipynb) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hagopjay/x3d.lab/blob/main/notebooks/04_Model_Duel.ipynb) | the same prompts to several models (NVIDIA build.nvidia.com, Claude, OpenAI, Gemini, or the free `sample`), x3d_mcp as referee: valid as written / after the server's exact fixes / after the model's repair, an error profile by kind, a prompt-by-prompt grid, a JSON duel card. Shows the worst-case request count before spending | CPU | new |
+| [05 GPU Hog](notebooks/05_GPU_Hog.ipynb) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hagopjay/x3d.lab/blob/main/notebooks/05_GPU_Hog.ipynb) | everything at once on a GPU: a corpus of ~230 scenes (one per X3D node from x3d.loom's fixtures, the 7 node types new in 4.1, the lab's scenes; each as 4.0 and 4.1) through x3d_mcp, lxml + the version's XSD, X_ITE, Blender import / round trip / export validity, Cycles and loom's Babylon bridge; the heavy stress test; warm traces; findings sorted by project (x3d_mcp, X_ITE, x3d-blender-io, x3d.loom, Copilot) with issue drafts | A100 / G4 | new |
 
-01–04 import the same `x3dlab` package (00 is self-contained on purpose) from this repo, so a fix lands once.
+01–05 import the same `x3dlab` package (00 is self-contained on purpose) from this repo, so a fix lands once.
 
 ## Which x3d_mcp
 
