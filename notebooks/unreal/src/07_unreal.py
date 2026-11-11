@@ -50,6 +50,8 @@
 # 2. Download **`Linux_Unreal_Engine_5.8.4.zip`** (the current release in Nov 2026; 5.8.1's zip was 39 GB, ~70 GB unpacked). 5.9 is a *preview*: use it only on purpose.
 # 3. Upload the zip to your Drive folder **`MyDrive/x3dlab/unreal/`** (any name `Linux_Unreal_Engine_*.zip`). Drive needs the room (a Google One plan); the browser upload of 40 GB takes a while: let it finish.
 #
+# **A2 · Straight from Epic's download link into your Drive (fastest: ~70 MB/s, no upload from your computer).** On unrealengine.com/linux, right-click the download button and copy the link, then run step **5a** below and paste it when asked. The link is typed into a hidden prompt: it is never saved in the notebook, so saving the notebook to GitHub cannot publish it (Epic's links expire after an hour anyway).
+#
 # **B · Epic's container image, without Docker.**
 # 1. Link your GitHub account to your Epic account ([epicgames.com › Account › Apps and accounts](https://www.epicgames.com/account/connections)) and accept the e-mail invitation to GitHub's **EpicGames** organisation.
 # 2. Create a GitHub *classic* personal access token with only **`read:packages`**.
@@ -61,6 +63,8 @@
 # %%
 #@title 1 · Options { display-mode: "form" }
 ENGINE_SOURCE = "auto"  #@param ["auto", "cache", "zip", "ghcr"]
+ENGINE_VERSION = "5.4"  #@param ["5.4", "5.8", "5.9", "5.2", "newest"] {allow-input: true}
+#@markdown **ENGINE_VERSION** picks among the engines in your Drive (cache archives and `Linux_Unreal_Engine_*.zip`): `5.4` = any 5.4.x, `5.8.4` = exactly that, `newest` = the newest that is not a preview. Changing it switches engines (the one on the local disk is replaced). 5.4 is the default because it is the newest *stable* Linux zip seen so far; 5.9 is a preview.
 DRIVE_DIR = "/content/drive/MyDrive/x3dlab/unreal"  #@param {type:"string"}
 GHCR_TAG = "dev-slim-5.8.4"  #@param {type:"string"}
 SCENES = "calib, stilllife, toycar-x3d, toycar-gltf, odyssey, gobbler3"  #@param {type:"string"}
@@ -105,11 +109,16 @@ sys.path.insert(0, str(UNREAL_DIR))
 if importlib.util.find_spec("x3dlab") is None:
     print("installing the x3dlab package (formats, Blender, X_ITE)…")
     subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-e", "%s[research]" % LAB_DIR], check=True)
+# An editable install only becomes importable after a kernel restart (its .pth file is read at start-up), so put the
+# package's source folder on the path as well: `import x3dlab` works in this same session.
+if str(LAB_DIR / "src") not in sys.path:
+    sys.path.insert(1, str(LAB_DIR / "src"))
+importlib.invalidate_caches()
 from x3due import (compare, convert, engine, engines, gltfstat, pipeline, project, report, showcase, tier, uerun, vulkan,
                    x3dscene)
 SC = report.Scorecard()
 CARD = {"notebook": "07_Unreal_Fidelity", "lab_commit": sh("git -C %s rev-parse --short HEAD" % LAB_DIR), "options": {
-    k: globals()[k] for k in ("ENGINE_SOURCE", "GHCR_TAG", "SCENES", "RUNG", "LOOK", "MAX_VIEWPOINTS", "COMPARE", "USD", "FORCE_HWRT")}}
+    k: globals()[k] for k in ("ENGINE_SOURCE", "ENGINE_VERSION", "GHCR_TAG", "SCENES", "RUNG", "LOOK", "MAX_VIEWPOINTS", "COMPARE", "USD", "FORCE_HWRT")}}
 WORK = Path("/content/x3due") if Path("/content").is_dir() else Path.home() / "x3due"
 print("✅ helpers from %s @ %s · work folder %s" % (LAB_REPO, CARD["lab_commit"], WORK))
 
@@ -174,6 +183,53 @@ CARD.update(vulkan={"enable": {k: VK_ENABLE.get(k) for k in ("driver", "skipped"
     ladder=PLAN["ladder"])
 
 # %% [markdown]
+# ## 5a · (optional) Download Unreal from your Epic link into Drive
+#
+# Skip this when the zip is already in your Drive. The file keeps Epic's own name (for example `Linux_Unreal_Engine_5.4.4.zip`), so the version is known.
+
+# %%
+#@title 5a · Paste your Epic download link (hidden; never saved) { display-mode: "form" }
+DOWNLOAD = False  #@param {type:"boolean"}
+if DOWNLOAD:
+    import re as _re, urllib.parse as _up, urllib.request as _ur
+    from getpass import getpass
+    try:
+        from google.colab import drive as _drive
+        _drive.mount("/content/drive")
+    except Exception:
+        pass
+    _url = getpass("Epic download link (Enter to skip): ").strip()
+    if _url:
+        _q = _up.parse_qs(_up.urlparse(_url).query)
+        _cd = (_q.get("response-content-disposition") or [""])[0]
+        _m = _re.search(r"filename\*=UTF-8''([^;]+)", _cd) or _re.search(r'filename="?([^";]+)', _cd)
+        _name = _up.unquote(_m.group(1)) if _m else "Linux_Unreal_Engine_download.zip"
+        if not _name.startswith("Linux_Unreal_Engine"):
+            print("⚠️ this link is for %s, not the engine zip; saving it anyway" % _name)
+        Path(DRIVE_DIR).mkdir(parents=True, exist_ok=True)
+        _dest, _part = Path(DRIVE_DIR) / _name, Path(DRIVE_DIR) / (_name + ".part")
+        print("downloading %s → %s" % (_name, DRIVE_DIR))        # the link itself is never printed
+        _t0, _last = time.time(), 0
+        with _ur.urlopen(_url, timeout=60) as _r, open(_part, "wb") as _f:
+            _total = int(_r.headers.get("Content-Length") or 0)
+            _done = 0
+            while True:
+                _b = _r.read(16 << 20)
+                if not _b:
+                    break
+                _f.write(_b); _done += len(_b)
+                if time.time() - _last > 30:
+                    _last = time.time()
+                    print("  %.1f / %.1f GB · %.0f MB/s" % (_done / 2**30, _total / 2**30, _done / 2**20 / max(1, _last - _t0)))
+        if _total and _done != _total:
+            raise SystemExit("download incomplete (%d of %d bytes): run again with a fresh link" % (_done, _total))
+        _part.rename(_dest)
+        print("✅ %s · %.1f GB in %.0f s" % (_name, _done / 2**30, time.time() - _t0))
+    del _url
+else:
+    print("skipped (tick DOWNLOAD to paste an Epic link)")
+
+# %% [markdown]
 # ## 5 · Get the engine
 #
 # From your Drive (a cache archive from an earlier run, or your `Linux_Unreal_Engine_*.zip`), or from Epic's container image. The zip's index is read first: the notebook knows the exact size before it extracts anything, and decides whether to copy the zip to the local SSD (faster) or extract straight from Drive (when the disk is too small for both).
@@ -197,19 +253,26 @@ if not engine.tool("zstd") and HW["gpu"]:
 Path(DRIVE_DIR).mkdir(parents=True, exist_ok=True) if Path(DRIVE_DIR).parent.exists() else None
 t0 = time.time()
 try:
-    ENGINE = pipeline.get_engine(LAB, ENGINE_SOURCE, DRIVE_DIR, GHCR_TAG, secret("GHCR_USER"), secret("GHCR_TOKEN"))
+    ENGINE = pipeline.get_engine(LAB, ENGINE_SOURCE, DRIVE_DIR, GHCR_TAG, secret("GHCR_USER"), secret("GHCR_TOKEN"),
+                                 want=ENGINE_VERSION)
     print("✅ Unreal %s from %s in %.0f s → %s" % (ENGINE.get("version"), ENGINE["source"], ENGINE["seconds"], LAB.engine_dir))
     SC.add("5 engine", "engine on local disk", "PASS", "Unreal %s (changelist %s) from %s in %.0f s" % (
         ENGINE.get("version"), ENGINE.get("changelist"), ENGINE["source"], ENGINE["seconds"]))
     ver = ENGINE.get("version") or ""
-    SC.add("5 engine", "engine version", "PASS" if ver.startswith("5.8") else "WARN",
-           "%s (5.8.x is the current release in Nov 2026; 5.9 is a preview)" % ver)
+    SC.add("5 engine", "engine version", "PASS" if engine.vkey(ver)[:2] >= (5, 4) else "WARN",
+           "%s (asked for %s; 5.8.x is the current release, 5.9 a preview; before 5.4 Unreal on Linux has no Vulkan SM6, so no ray tracing)"
+           % (ver, ENGINE_VERSION))
+    LAB.settings["sm6"] = engine.default_sm6(ver)
 except Exception as exc:
     ENGINE = {"error": str(exc)}
     print("❌", exc)
     SC.add("5 engine", "engine on local disk", "FAIL", str(exc)[:350])
 CARD["engine"] = {k: v for k, v in ENGINE.items() if k not in ("extract",)}
-if ENGINE.get("version") and PLAN["ray_tracing"]["hw_rt"]:
+if ENGINE.get("version") and not LAB.settings["sm6"]:
+    LAB.settings["ray_tracing"] = False
+    engine.disable_vulkan_rt(LAB.engine_dir)
+    print("Unreal %s: Shader Model 5, no ray tracing (no Vulkan SM6 shader format before 5.4)" % ENGINE["version"])
+elif ENGINE.get("version") and PLAN["ray_tracing"]["hw_rt"]:
     LAB.settings["ray_tracing"] = True
     CARD["engine"]["vulkan_rt_config"] = engine.enable_vulkan_rt(LAB.engine_dir, LAB.settings["bindless"])
     print("Vulkan ray tracing switched on in the engine config (Epic's documented edit; originals kept as *.x3due.orig)")
@@ -244,6 +307,14 @@ if ENGINE.get("version"):
            "%.0f s cold, %.0f s warm (difference ≈ global shader compile + DDC fill)" % (SMOKE["cold"]["seconds"], SMOKE["warm"]["seconds"]))
     if p["verdict"] != "PASS":
         print("\n--- the log lines that matter ---\n" + SMOKE["cold"]["excerpt"])
+        stack = pipeline.crash_stack(LAB)
+        if stack:
+            print("\n--- Unreal's crash call stack (newest crash) ---\n" + stack)
+            CARD.setdefault("crashes", []).append(stack[:1500])
+    for k, v in SMOKE.items():
+        for a in v.get("attempts") or []:
+            if a.get("change"):
+                print("%s start: retried with %s" % (k, a["change"]))
     CARD["smoke"] = {k: {x: v.get(x) for x in ("rc", "seconds", "killed", "proof", "gpu", "attempts", "timing")} for k, v in SMOKE.items()}
 else:
     SC.add("6 start", "RHI is Vulkan on the NVIDIA GPU", "SKIP", "no engine (step 5)")
@@ -514,7 +585,8 @@ display(HTML("<div style='font:14px system-ui;line-height:1.5'>" + "<br>".join(
 # |---|---|---|
 # | step 4: *no libnvidia-gl at exactly …* | the apt sources lack the driver's exact version | nothing to do safely; a different version would break CUDA. Try another runtime (the driver differs per GPU type) |
 # | step 4: user `ue` sees no NVIDIA device | the ICD was not unpacked, or `/dev/nvidia*` is not readable by `ue` | rerun step 4; `ls -l /dev/nvidia*` |
-# | step 5: *no engine found* | no zip in `DRIVE_DIR`, no cache, no `GHCR_TOKEN` | see *Your one-time step* |
+# | step 5: *no engine found* | no zip or cache for `ENGINE_VERSION` in `DRIVE_DIR`, no `GHCR_TOKEN` | the message lists the zips it saw; pick one of those versions, or see *Your one-time step* |
+# | step 6: rc 139, call stack in `ShaderFormatVersion` | the project asked for a shader format this engine lacks (UE 5.2 has no Vulkan SM6 on Linux) | automatic: retried with Shader Model 5 and no ray tracing; or use 5.4+ |
 # | step 5: ghcr HTTP 401/403 | the token lacks `read:packages`, or the GitHub account is not linked to Epic / the EpicGames invitation is not accepted | fix the token or the link, rerun step 5 |
 # | step 5: *not enough local disk* | the trimmed engine does not fit | a runtime with a bigger disk (A100/G4), or remove old files in `/content` |
 # | step 6: `FAIL` *NullRHI* or *software Vulkan* | Unreal did not get the NVIDIA ICD | the run already pins `VK_ICD_FILENAMES` to NVIDIA's; check step 4's rows |

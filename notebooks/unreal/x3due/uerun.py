@@ -51,6 +51,8 @@ CRASH = [  # (signature, regex, advice)
     ("oom_host", re.compile(r"Ran out of memory|Out of memory|\bOOM\b|std::bad_alloc", re.I), "out of RAM: fewer shader workers, High-RAM runtime"),
     ("no_display", re.compile(r"No available video device|SDL_Init failed|Could not initialize SDL|cannot open display", re.I),
      "SDL wants a display: retry with SDL_VIDEODRIVER=offscreen, then under Xvfb"),
+    ("shader_format", re.compile(r"ShaderFormatVersion|Unable to find shader format|No target platform (?:supports|for) shader format", re.I),
+     "this engine has no shader format for the targeted platform (seen: UE 5.2 asked for SF_VULKAN_SM6): retry with Shader Model 5 and no ray tracing"),
     ("assert", re.compile(r"Assertion failed:|appError called:|Fatal error!?|Unhandled Exception|Caught signal", re.I),
      "engine crash: see the lines below and the crash folder under Saved/Crashes"),
     ("python", re.compile(r"LogPython: Error:|Traceback \(most recent call last\)", re.I), "error in the lab's Unreal Python script"),
@@ -332,6 +334,7 @@ def _stop_group(proc):
 
 # ---------------------------------------------------------------------- retry ladder
 RETRY = [  # (signature, label, change) -- applied in order, one new attempt each, only when the signature is seen
+    ("shader_format", "Shader Model 5, no ray tracing", {"sm6": False, "ray_tracing": False}),
     ("device_lost", "async compute off", {"cvars": {"r.Vulkan.AllowAsyncCompute": 0}}),
     ("bindless_rt", "bindless for all shader types", {"bindless": "AllShaderTypes"}),
     ("device_lost", "no ray tracing", {"ray_tracing": False}),

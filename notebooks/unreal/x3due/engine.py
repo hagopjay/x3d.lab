@@ -59,6 +59,33 @@ def version_from_name(name: str) -> str | None:
     return m.group(1) if m else None
 
 
+def vkey(v) -> tuple:
+    """'5.4.4' -> (5, 4, 4); None -> ()."""
+    return tuple(int(x) for x in re.findall(r"\d+", v or ""))
+
+
+def is_preview(name: str) -> bool:
+    return bool(re.search(r"preview|[-_.]p\d|early.?access", os.path.basename(name), re.I))
+
+
+def pick_version(paths, want="5.4") -> list[str]:
+    """Paths whose version (from the file name) matches `want`, oldest first.
+    want: "5.4" (any 5.4.x), "5.4.4" (exact), "newest" (newest that is not a preview, else the newest preview)."""
+    paths = sorted(paths, key=lambda f: vkey(version_from_name(f)))
+    if not want or want == "newest":
+        stable = [f for f in paths if not is_preview(f)]
+        return stable or paths
+    w = vkey(want)
+    return [f for f in paths if vkey(version_from_name(f))[:len(w)] == w]
+
+
+def default_sm6(version) -> bool:
+    """Ask for Vulkan Shader Model 6 by default only on 5.4 and newer. UE 5.2 on Linux has no SF_VULKAN_SM6 shader
+    format and segfaults in ShaderFormatVersion when a project targets it (seen on Colab, 11 Nov 2026). The 5.4 cut-off
+    is a guess; the retry ladder (uerun.RETRY "shader_format") falls back to SM5 if a newer engine lacks it too."""
+    return vkey(version)[:2] >= (5, 4) if version else True
+
+
 def find_zips(drive_dir) -> list[str]:
     pats = ["Linux_Unreal_Engine_*.zip", "Linux_Unreal_Engine*.zip", "*Unreal*Engine*.zip"]
     hits = []
