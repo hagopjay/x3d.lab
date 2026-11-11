@@ -103,3 +103,28 @@ def test_worker_retries_a_failed_optix_denoiser():
     assert 'except RuntimeError' in body and '"denoiser" not in str(exc).lower()' in body
     assert body.count("bpy.ops.render.render(write_still=True)") == 2 and 'set_denoiser(scn, denoiser, backend)' in body
     assert '"denoiser": denoiser' in body and "use_adaptive_sampling" in body
+
+
+def test_mcp_log_classifier_hides_closed_session_tracebacks():
+    """x3d_mcp logs through rich: the message wraps ('Error in standalone SSE' / 'writer') and the traceback is an
+    indented box ending in ClosedResourceError. Seen on Colab (A100, 10 Nov 2026) as red ERROR lines."""
+    from x3dlab import procs
+    c = procs.mcp_log_classifier()
+    seen = [c(line) for line in [
+        "ERROR    Error in standalone SSE      streamable_http.py:775",
+        "         writer",
+        "         ╭─ Traceback (most recent ─╮",
+        "         │ 3/dist-packages/anyio/st │",
+        "         │ ❱ 141 │   │   │   │   │  │",
+        "         ╰──────────────────────────╯",
+        "         ClosedResourceError",
+        "INFO     Processing request of type CallToolRequest",
+        "ERROR    Tool validate_x3d failed: boom",
+    ]]
+    assert seen[:7] == ["DEBUG"] * 7
+    assert seen[7] == "DEBUG" and seen[8] == "ERROR"            # chatter stays quiet, a real error is still an error
+    c2 = procs.mcp_log_classifier()                               # a box cut short by the next record ends the quiet spell
+    assert [c2(x) for x in ["ERROR    Error in standalone SSE writer", "  │ frame │", "ERROR    real failure"]] == ["DEBUG", "DEBUG", "ERROR"]
+    c3 = procs.mcp_log_classifier()                               # rich's time column: "[00:34:20]" or blanked with spaces
+    assert [c3(x) for x in ["[00:34:20] ERROR    Error in standalone SSE", "                    │ frame │",
+                            "           ERROR    Tool failed: boom"]] == ["DEBUG", "DEBUG", "ERROR"]
