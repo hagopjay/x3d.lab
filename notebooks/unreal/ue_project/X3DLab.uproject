@@ -11,6 +11,6 @@
 		{"Name": "Interchange", "Enabled": true},
 		{"Name": "GLTFImporter", "Enabled": false},
 		{"Name": "USDImporter", "Enabled": false},
-		{"Name": "NNEDenoiser", "Enabled": false}
+		{"Name": "OpenImageDenoise", "Enabled": true}
 	]
 }

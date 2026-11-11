@@ -132,7 +132,17 @@ BASE_CVARS = {                     # stills of a static scene: nothing that smea
 }
 
 
+# Vulkan's largest single allocation on NVIDIA is 2 GB (maxMemoryAllocationSize / maxStorageBufferRange). Unreal stops at
+# start-up when the Nanite streaming pool is bigger ("Streaming pool size (3276MB) must be smaller than the largest
+# allocation supported by the graphics hardware (2048MB)": an 80 GB A100, 11 Nov 2026), so every GPU stays under it.
+NANITE_POOL_MAX_MB = 2000
+
+
 def _preset(res, spatial, temporal, renderer, **kw):
+    """Samples are all spatial: the stills have no motion blur (shutter angle 0), and with it Movie Render Queue's
+    temporal samples land on the same instant and add nothing (seen on the L4 run, 11 Nov 2026: 4 x 8 samples looked like
+    4). spatial x temporal spatial samples give the same count, each with its own jitter."""
+    spatial, temporal = int(spatial) * int(temporal), 1
     d = {"resolution": list(res), "spatial_samples": spatial, "temporal_samples": temporal, "renderer": renderer,
          "tiles": 1, "warmup_frames": 32, "cvars": dict(BASE_CVARS)}
     d.update(kw)
@@ -154,7 +164,7 @@ def ladder(kind: str, vram_gb: float, hw_rt: bool) -> dict:
     else:                             # T4 or smaller
         res = [(1280, 720), (1920, 1080), (2560, 1440)]
     pools = {"r.Streaming.PoolSize": int(min(0.35 * v * 1024, 32768)) if v else 1000,
-             "r.Nanite.Streaming.StreamingPoolSize": int(min(max(512, 0.04 * v * 1024), 4096)) if v else 512,
+             "r.Nanite.Streaming.StreamingPoolSize": int(min(max(512, 0.04 * v * 1024), NANITE_POOL_MAX_MB)) if v else 512,
              "r.VT.PoolSizeScale": 8 if v >= 70 else 4 if v >= 36 else 2 if v >= 20 else 1}
     resident = v >= 36                # load every texture at full resolution instead of streaming
     lumen = {"sg.GlobalIlluminationQuality": 4, "sg.ReflectionQuality": 4, "sg.ShadowQuality": 4, "sg.PostProcessQuality": 4,

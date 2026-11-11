@@ -172,25 +172,71 @@ def cache_engine(lab: Lab, drive_dir, version) -> dict:
     return {"archive": str(arc), "gb": round(arc.stat().st_size / 2**30, 2), "tar_s": r["seconds"], "copy_s": round(time.time() - t, 1)}
 
 
-def ddc_restore(lab: Lab, drive_dir) -> dict:
-    arc = next((Path(drive_dir) / "cache" / n for n in ("ddc.tar.zst", "ddc.tar.gz") if (Path(drive_dir) / "cache" / n).exists()), None)
+def shader_cache_paths(lab: Lab) -> list:
+    """Where Unreal keeps compiled shaders. From 5.4 the local DDC is a Zen store under the user's HOME
+    (~/.config/Epic/UnrealEngine/Common/Zen/Data): the old archive of lab.ddc alone was 106 bytes (11 Nov 2026)."""
+    return [Path(lab.home), Path(lab.ddc), Path(lab.project_dir) / "DerivedDataCache"]
+
+
+def _cache_archive(drive_dir, version=None, existing=False):
+    c = Path(drive_dir) / "cache"
+    ext = "zst" if E.tool("zstd") else "gz"
+    if not existing:
+        return c / ("shaders_%s.tar.%s" % (version or "unknown", ext))
+    if version:
+        for e in ("zst", "gz"):
+            if (c / ("shaders_%s.tar.%s" % (version, e))).exists():
+                return c / ("shaders_%s.tar.%s" % (version, e))
+    found = sorted(c.glob("shaders_*.tar.*"), key=lambda p: p.stat().st_mtime)
+    if found:
+        return found[-1]
+    return next((c / n for n in ("ddc.tar.zst", "ddc.tar.gz") if (c / n).exists()), None)
+
+
+def stop_cache_servers(user):
+    """zenserver keeps the cache files open (and a stale one hangs the next start): stop the user's, gently first."""
+    if not shutil.which("pkill"):
+        return
+    subprocess.run(["pkill", "-TERM", "-u", user, "-f", "zenserver"], capture_output=True)
+    time.sleep(2)
+    for pat in ("zenserver", "UnrealTraceServer"):
+        subprocess.run(["pkill", "-9", "-u", user, "-f", pat], capture_output=True)
+
+
+def ddc_restore(lab: Lab, drive_dir, version=None, root="/") -> dict:
+    """Put the shader cache from Drive back where Unreal looks for it (paths in the archive are relative to `root`)."""
+    arc = _cache_archive(drive_dir, version, existing=True)
     if arc is None:
-        return {"skipped": "no DDC in Drive yet (first run: shaders compile from scratch)"}
-    r = E.run_logged(E.unarchive_cmd(arc, lab.ddc.parent), lab.log)
-    return {"restored": str(arc), **r}
+        return {"skipped": "no shader cache in Drive yet (first run: shaders compile from scratch)"}
+    if arc.name.startswith("ddc."):          # the old archive: lab.ddc only, relative to its parent
+        Path(lab.ddc).parent.mkdir(parents=True, exist_ok=True)
+        r = E.run_logged(E.unarchive_cmd(arc, lab.ddc.parent), lab.log)
+    else:
+        r = E.run_logged(E.unarchive_cmd(arc, root), lab.log)
+    for p in shader_cache_paths(lab):
+        if p.exists() and os.geteuid() == 0:
+            subprocess.run(["chown", "-R", "%s:%s" % (lab.user, lab.user), str(p)], capture_output=True)
+    return {"restored": str(arc), "gb": round(arc.stat().st_size / 2**30, 2), **r}
 
 
-def ddc_save(lab: Lab, drive_dir) -> dict:
-    subprocess.run(["pkill", "-u", lab.user, "-f", "zenserver"], capture_output=True)   # only the user this notebook made
-    arc = Path(drive_dir) / "cache" / ("ddc.tar.%s" % ("zst" if E.tool("zstd") else "gz"))
+def ddc_save(lab: Lab, drive_dir, version=None, root="/") -> dict:
+    stop_cache_servers(lab.user)
+    have = [p for p in shader_cache_paths(lab) if p.exists()]
+    if not have:
+        return {"error": "nothing to save: no HOME, DDC or DerivedDataCache yet"}
+    arc = _cache_archive(drive_dir, version)
     arc.parent.mkdir(parents=True, exist_ok=True)
     tmp = lab.work / arc.name
-    r = E.run_logged(E.archive_cmd(lab.ddc, tmp), lab.log)
-    if r["rc"]:
+    rel = [str(p.resolve().relative_to(Path(root).resolve())) for p in have]
+    comp = ["--use-compress-program", "zstd -T0 -3"] if arc.suffix == ".zst" else ["-z"]
+    r = E.run_logged(["tar"] + comp + ["-cf", str(tmp), "-C", str(root)] + rel, lab.log)
+    if r["rc"] or not tmp.exists():
         return {"error": "tar failed"}
+    gb = tmp.stat().st_size / 2**30
     shutil.copyfile(tmp, str(arc) + ".part")
     os.replace(str(arc) + ".part", arc)
-    return {"archive": str(arc), "gb": round(arc.stat().st_size / 2**30, 2)}
+    tmp.unlink()
+    return {"archive": str(arc), "gb": round(gb, 2), "paths": rel, "seconds": r["seconds"]}
 
 
 # ---------------------------------------------------------------------- running Unreal with the retry ladder
@@ -237,6 +283,8 @@ def run_unreal(lab: Lab, make_cmd, label, log_dir, timeout=7200, done_file=None,
         log_path = Path(log_dir) / ("%s.%d.log" % (label, k))
         if done_file and os.path.exists(done_file):
             os.remove(done_file)
+        if lab.runner is uerun.run and os.geteuid() == 0:
+            stop_cache_servers(lab.user)              # a zenserver left by a killed run hangs the next start
         live = lab.live
         kw = {}
         if live:
@@ -328,12 +376,14 @@ def import_scene(lab: Lab, name, source, kind, manifest, shape_centres=None, tim
 
 
 def render(lab: Lab, name, camera_names, rung_name, rung, look="cinematic", key=False, res_override=None, timeout=4 * 3600,
-           mode="mrq") -> dict:
+           mode="mrq", grade=None, grade_name="") -> dict:
+    """grade: render-time changes (project.grade_ok); grade_name tags the stills, so several grades of one view coexist."""
     d = lab.out / "stills" / name
     d.mkdir(parents=True, exist_ok=True)
-    tag = "%s_%s%s" % (rung_name, look, "_key" if key else "")
+    tag = "%s_%s%s%s" % (rung_name, look, "_key" if key else "", ("_" + project.ue_name(grade_name)) if grade_name else "")
     rep = lab.out / "scenes" / name / ("render_report_%s.json" % tag)
-    spec = project.render_jobs(name, camera_names, rung_name, rung, d, rep, look=look, key=key, override_res=res_override, mode=mode)
+    spec = project.render_jobs(name, camera_names, rung_name, rung, d, rep, look=look, key=key, override_res=res_override, mode=mode,
+                               grade=grade, tag=grade_name)
     jp = uerun.write_json(lab.out / "scenes" / name / ("render_job_%s.json" % tag), spec)
     lab.own()
     map_path = spec["jobs"][0]["map"] if spec["jobs"] else "/Engine/Maps/Entry"
@@ -350,6 +400,41 @@ def render(lab: Lab, name, camera_names, rung_name, rung, look="cinematic", key=
         stills.append({"job": j["name"], "viewpoint": j["viewpoint"], "files": files, "seconds": r.get("seconds"),
                        "png": next((f for f in files if f.endswith(".png")), None), "exr": next((f for f in files if f.endswith(".exr")), None),
                        "resolution": j["resolution"], "renderer": j["renderer"], "samples": [j["spatial"], j["temporal"]]})
+    out.update(report=report, stills=stills, spec=spec)
+    return out
+
+
+def render_grades(lab: Lab, name, camera_names, rung_name, rung, grades: dict, look="cinematic", res_override=None, label="round",
+                  timeout=4 * 3600) -> dict:
+    """Every grade x every viewpoint in ONE Unreal process (the map is reopened per still, so grades never mix):
+    much faster than a start per grade. Returns {"stills": {(grade, viewpoint): png or None}, ...run_unreal's result}."""
+    d = lab.out / "stills" / name
+    d.mkdir(parents=True, exist_ok=True)
+    tag = "%s_%s" % (rung_name, project.ue_name(label))
+    rep = lab.out / "scenes" / name / ("render_report_%s.json" % tag)
+    jobs, which = [], {}
+    for gname, g in grades.items():
+        spec = project.render_jobs(name, camera_names, rung_name, rung, d, rep, look=look, override_res=res_override, grade=g, tag=gname)
+        for j, cam in zip(spec["jobs"], camera_names):
+            which[j["name"]] = (gname, cam)
+        jobs += spec["jobs"]
+    spec = {"scene": project.ue_name(name), "report": str(rep), "mode": "mrq", "jobs": jobs}
+    project.validate_render_job(spec)
+    jp = uerun.write_json(lab.out / "scenes" / name / ("render_job_%s.json" % tag), spec)
+    lab.own()
+    map_path = jobs[0]["map"] if jobs else "/Engine/Maps/Entry"
+    for j in jobs:
+        for f in glob.glob(str(d / (j["name"] + ".*"))):
+            os.remove(f)                                     # a still left from an earlier round must not count as new
+    out = run_unreal(lab, lambda L: uerun.render_cmd(L.engine_dir, L.proj(), map_path, jp, sm6=L.settings["sm6"],
+                                                     resolution=(1280, 720)),
+                     "render_%s_%s" % (project.ue_name(name), tag), lab.out / "logs", timeout=timeout, done_file=str(rep) + ".done",
+                     watch=[d])
+    report = json.loads(rep.read_text()) if rep.exists() else {"jobs": [], "error": "no render report"}
+    stills = {}
+    for j in jobs:
+        files = sorted(glob.glob(str(d / (j["name"] + ".*"))))
+        stills[which[j["name"]]] = next((f for f in files if f.endswith(".png")), None)
     out.update(report=report, stills=stills, spec=spec)
     return out
 

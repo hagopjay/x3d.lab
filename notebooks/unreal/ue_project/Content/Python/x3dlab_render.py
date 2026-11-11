@@ -85,11 +85,104 @@ def prepare_world(world, job):
     for look in ("match", "cinematic"):
         for v in actors_with_tag(world, "x3dlab_look_" + look):
             attempt("look enable", lambda: v.set_editor_property("enabled", look == job.get("look", "cinematic")))
+    apply_grade(world, job)
     key = job.get("backdrop") == "key"
     for a in actors_with_tag(world, "x3dlab_backdrop"):
         attempt("backdrop", lambda: a.set_actor_hidden_in_game(key))
     for a in actors_with_tag(world, "x3dlab_backdropkey"):
         attempt("backdrop key", lambda: a.set_actor_hidden_in_game(not key))
+
+
+def _set(obj, k, v):
+    obj.set_editor_property(k, v)
+    return True
+
+
+def _enum_value(k, v):
+    """Strings name enum members: auto_exposure_method "AEM_MANUAL" etc."""
+    if not isinstance(v, str):
+        return v
+    for enum in ("AutoExposureMethod", "BloomMethod", "TemperatureMethod"):
+        e = getattr(unreal, enum, None)
+        if e is not None and hasattr(e, v):
+            return getattr(e, v)
+    return v
+
+
+def _scene_centre(world):
+    """Middle of the imported meshes (the backdrop and the lab's own actors excluded), from their bounds."""
+    lo, hi = [1e30] * 3, [-1e30] * 3
+    for a in unreal.GameplayStatics.get_all_actors_of_class(world, unreal.StaticMeshActor):
+        tags = [str(t) for t in a.tags]
+        if any(t.startswith("x3dlab_backdrop") for t in tags) or "sky" in str(a.get_actor_label()).lower():
+            continue
+        o, e = a.get_actor_bounds(False)
+        for i, (c, x) in enumerate(((o.x, e.x), (o.y, e.y), (o.z, e.z))):
+            lo[i], hi[i] = min(lo[i], c - x), max(hi[i], c + x)
+    if lo[0] > hi[0]:
+        return None
+    return [(lo[i] + hi[i]) / 2 for i in range(3)]
+
+
+def _camera_focus(world, job, g):
+    """Depth of field on the viewpoint's CineCamera: manual focus at `focus` cm ("auto": its distance to the scene
+    centre) and the f-stop `aperture`."""
+    cams = actors_with_tag(world, "x3dlab_vp_" + job["viewpoint"])
+    if not cams:
+        return None
+    cam = cams[0]
+    comp = cam.get_cine_camera_component() if hasattr(cam, "get_cine_camera_component") else cam.get_component_by_class(unreal.CineCameraComponent)
+    dist = g.get("focus", "auto")
+    if dist == "auto":
+        c = _scene_centre(world)
+        p = cam.get_actor_location()
+        dist = ((p.x - c[0]) ** 2 + (p.y - c[1]) ** 2 + (p.z - c[2]) ** 2) ** 0.5 if c else 1000.0
+    fs = comp.get_editor_property("focus_settings")
+    fs.set_editor_property("focus_method", unreal.CameraFocusMethod.MANUAL)
+    fs.set_editor_property("manual_focus_distance", float(dist))
+    comp.set_editor_property("focus_settings", fs)
+    if "aperture" in g:
+        attempt("aperture", lambda: comp.set_editor_property("current_aperture", float(g["aperture"])))
+    return round(float(dist), 1)
+
+
+def apply_grade(world, job):
+    """The job's grade (project.grade_ok): post-process fields on the active look volume, light scale, headlights.
+    The map is reopened for every job, so nothing here carries over to the next still."""
+    g = job.get("grade") or {}
+    if not g:
+        return
+    done = STATE["report"].setdefault("grade_applied", {})
+    post = g.get("post") or {}
+    if post:
+        look = job.get("look", "cinematic")
+        for v in actors_with_tag(world, "x3dlab_look_" + look):
+            s = attempt("grade settings", lambda: v.get_editor_property("settings"))
+            if s is None:
+                continue
+            for k, val in post.items():
+                if attempt("grade %s" % k, lambda: _set(s, k, _enum_value(k, val))):
+                    attempt("grade override_%s" % k, lambda: _set(s, "override_" + k, True))
+            attempt("grade settings back", lambda: v.set_editor_property("settings", s))
+            done["post"] = sorted(post)
+    if "light_scale" in g:
+        n = 0
+        for a in actors_with_tag(world, "x3dlab_light"):
+            comp = attempt("grade light comp", lambda: a.get_component_by_class(unreal.LightComponent))
+            if comp is not None:
+                cur = attempt("grade intensity", lambda: comp.get_editor_property("intensity"))
+                if cur is not None:
+                    attempt("grade set intensity", lambda: comp.set_intensity(float(cur) * float(g["light_scale"])))
+                    n += 1
+        done["lights_scaled"] = n
+    if "aperture" in g or "focus" in g:
+        done["focus_cm"] = attempt("grade focus", lambda: _camera_focus(world, job, g))
+    if g.get("headlight") is False:
+        for a in actors_with_tag(world, "x3dlab_headlight"):
+            comp = attempt("headlight comp", lambda: a.get_component_by_class(unreal.LightComponent))
+            if comp is not None:
+                attempt("headlight off", lambda: comp.set_visibility(False))
+        done["headlight"] = False
 
 
 def configure(job_obj, job):

@@ -23,7 +23,8 @@ HERE = Path(__file__).resolve().parent
 TEMPLATE = HERE.parent / "ue_project"
 UE_SCRIPTS = HERE.parent / "ue_scripts"
 REQUIRED_PLUGINS = ("PythonScriptPlugin", "EditorScriptingUtilities", "SequencerScripting", "MovieRenderPipeline")
-OPTIONAL_PLUGINS = ("Interchange", "GLTFImporter", "USDImporter", "NNEDenoiser")
+# The path tracer's denoiser: OpenImageDenoise (CPU, runs on Linux). NNEDenoiser needs DirectML, which Linux lacks.
+OPTIONAL_PLUGINS = ("Interchange", "GLTFImporter", "USDImporter", "OpenImageDenoise")
 NAME_OK = re.compile(r"^[A-Za-z0-9_]{1,60}$")
 
 
@@ -47,7 +48,7 @@ def write(dest, engine_dir=None, plan=None, ray_tracing=False, usd=False, cpus=4
     for p in REQUIRED_PLUGINS + OPTIONAL_PLUGINS:
         have[p] = bool(list(Path(engine_dir, "Engine", "Plugins").glob("**/%s.uplugin" % p))) if engine_dir else None
     want = {p: True for p in REQUIRED_PLUGINS}
-    want.update({"Interchange": True, "GLTFImporter": False, "USDImporter": bool(usd), "NNEDenoiser": bool(ray_tracing)})
+    want.update({"Interchange": True, "GLTFImporter": False, "USDImporter": bool(usd), "OpenImageDenoise": True})
     plugins = [{"Name": p, "Enabled": on} for p, on in want.items() if have.get(p) in (True, None) or not on]
     up = json.loads((TEMPLATE / "X3DLab.uproject").read_text())
     up["Plugins"] = plugins
@@ -155,13 +156,43 @@ def validate_import_job(job: dict) -> None:
 
 
 # ---------------------------------------------------------------------- render job
+# A grade: render-time changes applied inside Unreal before each still, so a look can be tuned without re-importing.
+#   post:        PostProcessSettings fields set (with their override_ flag) on the active look volume, e.g. bloom_intensity,
+#                bloom_threshold, auto_exposure_bias (EV), vignette_intensity, film_grain_intensity, scene_fringe_intensity,
+#                depth_of_field_fstop, depth_of_field_focal_distance (cm), white_temp, lumen_final_gather_quality
+#   light_scale: multiplies every light the import placed (tag x3dlab_light)
+#   headlight:   false switches the viewpoint headlights off (the scene's own lights and emissive surfaces only)
+#   cvars:       console variables on top of the rung's (e.g. r.DepthOfFieldQuality 2 to let depth of field show)
+#   aperture:    f-stop of the viewpoint's CineCamera (with focus: depth of field; needs r.DepthOfFieldQuality > 0)
+#   focus:       "auto" (the middle of the imported meshes, backdrop excluded) or a distance in cm
+POST_KEY = re.compile(r"^[a-z][a-z0-9_]{1,60}$")
+
+
+def grade_ok(grade: dict | None) -> dict:
+    g = dict(grade or {})
+    unknown = set(g) - {"post", "light_scale", "headlight", "cvars", "name", "aperture", "focus"}
+    assert not unknown, "unknown grade keys %s" % sorted(unknown)
+    for k, v in (g.get("post") or {}).items():
+        assert POST_KEY.match(k) and not k.startswith("override_"), k
+        assert isinstance(v, (bool, str)) or (isinstance(v, (int, float)) and math.isfinite(v)), (k, v)
+    if "light_scale" in g:
+        assert isinstance(g["light_scale"], (int, float)) and 0 <= g["light_scale"] <= 1e4
+    if "aperture" in g:
+        assert isinstance(g["aperture"], (int, float)) and 0.5 <= g["aperture"] <= 64
+    if "focus" in g:
+        assert g["focus"] == "auto" or (isinstance(g["focus"], (int, float)) and 1 <= g["focus"] <= 1e7)
+    for k, v in (g.get("cvars") or {}).items():
+        assert re.match(r"^[A-Za-z][A-Za-z0-9_.]*$", k) and isinstance(v, (int, float)) and math.isfinite(v), (k, v)
+    return g
+
+
 def render_jobs(scene: str, camera_names: list, rung_name: str, rung: dict, out_dir: str, report_path: str, look="cinematic",
-                key=False, formats=("png", "exr"), override_res=None, mode="mrq") -> dict:
+                key=False, formats=("png", "exr"), override_res=None, mode="mrq", grade=None, tag="") -> dict:
     name = ue_name(scene)
     res = list(override_res or rung["resolution"])
     jobs = []
     for cam in camera_names:
-        jn = "%s__%s__%s%s" % (name, cam, rung_name, "__key" if key else "")
+        jn = "%s__%s__%s%s%s" % (name, cam, rung_name, "__key" if key else "", ("__" + ue_name(tag)) if tag else "")
         jobs.append({"name": jn, "viewpoint": cam, "map": "/Game/X3DLab/%s/Map_%s" % (name, name),
                      "sequence": "/Game/X3DLab/%s/Seq/Seq_%s" % (name, cam), "output_dir": str(out_dir), "resolution": res,
                      "spatial": 1 if key else rung["spatial_samples"], "temporal": 1 if key else rung["temporal_samples"],
@@ -170,6 +201,10 @@ def render_jobs(scene: str, camera_names: list, rung_name: str, rung: dict, out_
                      "look": look, "backdrop": "key" if key else "scene", "formats": ["png"] if key else list(formats),
                      "tiles": rung.get("tiles", 1), "warmup": 4 if key else rung.get("warmup_frames", 32),
                      "texture_streaming": rung.get("texture_streaming", "default")})
+        if grade:
+            g = grade_ok(grade)
+            jobs[-1]["cvars"] = dict(jobs[-1]["cvars"], **(g.get("cvars") or {}))
+            jobs[-1]["grade"] = {k: v for k, v in g.items() if k != "cvars"}
     spec = {"scene": name, "report": str(report_path), "mode": mode, "jobs": jobs}
     validate_render_job(spec)
     return spec

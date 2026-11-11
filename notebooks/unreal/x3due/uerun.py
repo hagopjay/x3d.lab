@@ -47,6 +47,8 @@ CRASH = [  # (signature, regex, advice)
      "GPU hang/crash (seen on UE 5.8.0 Linux); retry with r.Vulkan.AllowAsyncCompute=0, then without ray tracing, then -sm5"),
     ("bindless_rt", re.compile(r"ray tracing pipelines are only supported in bindless|SupportsBindless\(\)", re.I),
      "set BindlessSupport=AllShaderTypes for VULKAN_SM6 (DataDrivenPlatformInfo.ini) and retry"),
+    ("nanite_pool", re.compile(r"Streaming pool size \(\d+MB\) must be smaller than the largest allocation", re.I),
+     "the Nanite streaming pool is bigger than Vulkan's largest allocation (2 GB): retried with a smaller pool"),
     ("oom_device", re.compile(r"VK_ERROR_OUT_OF_DEVICE_MEMORY|Out of video memory|Failed to allocate Device Memory", re.I),
      "out of VRAM: use a lower ladder rung or smaller pools"),
     ("oom_host", re.compile(r"Ran out of memory|Out of memory|\bOOM\b|std::bad_alloc", re.I), "out of RAM: fewer shader workers, High-RAM runtime"),
@@ -394,6 +396,7 @@ def _stop_group(proc):
 
 # ---------------------------------------------------------------------- retry ladder
 RETRY = [  # (signature, label, change) -- applied in order, one new attempt each, only when the signature is seen
+    ("nanite_pool", "Nanite streaming pool 1000 MB", {"cvars": {"r.Nanite.Streaming.StreamingPoolSize": 1000}}),
     ("shader_format", "Shader Model 5, no ray tracing", {"sm6": False, "ray_tracing": False}),
     ("device_lost", "async compute off", {"cvars": {"r.Vulkan.AllowAsyncCompute": 0}}),
     ("bindless_rt", "bindless for all shader types", {"bindless": "AllShaderTypes"}),

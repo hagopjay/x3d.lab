@@ -80,6 +80,9 @@ FORCE_HWRT = False  #@param {type:"boolean"}
 VERBOSE = True  #@param {type:"boolean"}
 VISUAL = True  #@param {type:"boolean"}
 HEARTBEAT_S = 20  #@param {type:"slider", min:5, max:120, step:5}
+DRIVE_HEARTBEAT = True  #@param {type:"boolean"}
+GENTLE = True  #@param {type:"boolean"}
+#@markdown **DRIVE_HEARTBEAT** writes `DRIVE_DIR/heartbeat/<run>/heartbeat.json` every minute and mirrors logs and stills there every 5 minutes, so the run can be watched from anywhere, also after the browser disconnects (data out only; nothing is read back). **GENTLE** runs Unreal at low CPU and disk priority and leaves 4 cores free: a VM with every core busy can be recycled by Colab.
 #@markdown **VERBOSE** streams Unreal's important log lines while it runs, plus a heartbeat every `HEARTBEAT_S` seconds (shader jobs and their rate, workers, Unreal's memory, RAM, VRAM, GPU %, free disk), and warns when Unreal's memory grows with nothing to show for it. **VISUAL** shows every still the moment it is written and a VRAM/GPU chart after each Unreal job.
 LAB_REPO = "hagopjay/x3d.lab"
 LAB_REF = "main"
@@ -207,6 +210,75 @@ CARD.update(vulkan={"enable": {k: VK_ENABLE.get(k) for k in ("driver", "skipped"
     ladder=PLAN["ladder"])
 
 # %% [markdown]
+# ### 4b · Only if step 4 says user `ue` does not see the NVIDIA device
+#
+# Checks first and changes nothing when Vulkan already works. Otherwise it installs the Vulkan/GL userspace of *exactly* the running driver from NVIDIA's own driver package (`--extract-only`, no kernel module).
+
+# %%
+#@title 4b · Vulkan for THIS GPU: diagnose, and repair from NVIDIA's own driver package { display-mode: "form" }
+import glob, json, os, re, shutil, subprocess, urllib.request
+def sh(c, t=900):
+    r = subprocess.run(c, shell=True, capture_output=True, text=True, timeout=t)
+    return (r.stdout + r.stderr).strip()
+def ue_sees_gpu():
+    out = sh("runuser -u ue -- env -i HOME=/home/ue PATH=/usr/bin:/bin vulkaninfo --summary 2>&1")
+    return ("NVIDIA" in out and "llvmpipe" not in out.split("deviceName")[-1]), out
+ver, name = [x.strip() for x in sh("nvidia-smi --query-gpu=driver_version,name --format=csv,noheader").split(",")[:2]]
+print("GPU %s · driver %s" % (name, ver))
+if "VK_ENABLE" in globals():
+    print("step 4 said:", {k: VK_ENABLE.get(k) for k in ("driver", "skipped", "error")})
+sh("id ue || useradd -m ue")
+if not shutil.which("vulkaninfo"):
+    sh("apt-get install -y -qq libvulkan1 vulkan-tools || (apt-get update -qq && apt-get install -y -qq libvulkan1 vulkan-tools)")
+print("ICD files:", glob.glob("/usr/share/vulkan/icd.d/*nvidia*") + glob.glob("/etc/vulkan/icd.d/*nvidia*") or "none")
+ok, out = ue_sees_gpu()
+if ok:
+    print("✅ user ue already sees the GPU through Vulkan: nothing to repair")
+else:
+    print("user ue does not see the GPU (%s): installing the Vulkan/GL userspace of driver %s from NVIDIA" % (
+        (re.findall(r"ERROR[^\n]*", out) or ["no NVIDIA device"])[0][:120], ver))
+    run = "/content/NVIDIA-Linux-x86_64-%s.run" % ver
+    for url in ("https://us.download.nvidia.com/tesla/%s/NVIDIA-Linux-x86_64-%s.run" % (ver, ver),
+                "https://download.nvidia.com/XFree86/Linux-x86_64/%s/NVIDIA-Linux-x86_64-%s.run" % (ver, ver)):
+        if os.path.exists(run) and os.path.getsize(run) > 50e6:
+            break
+        try:
+            print("  downloading", url.split("/")[2], "…")
+            urllib.request.urlretrieve(url, run)
+        except Exception as e:
+            print("  ", e)
+    assert os.path.exists(run) and os.path.getsize(run) > 50e6, "could not download driver %s from NVIDIA" % ver
+    d = "/content/nvdrv-%s" % ver
+    if not os.path.isdir(d):
+        print("  extracting…", sh("sh %s --extract-only --target %s 2>&1 | tail -1" % (run, d)))
+    lib = "/usr/lib/x86_64-linux-gnu"
+    copied = []
+    for f in sorted(glob.glob(d + "/*.so.%s" % ver)):
+        b = os.path.basename(f)
+        if re.match(r"lib(GLX_nvidia|EGL_nvidia|nvidia-(glcore|glvkspirv|tls|gpucomp|eglcore|glsi|rtcore|vksc-core)|nvoptix)\.so\.", b):
+            if not os.path.exists(os.path.join(lib, b)):          # never replace what Colab ships (CUDA libs untouched)
+                shutil.copy2(f, lib); copied.append(b)
+    for b in ("libGLX_nvidia", "libEGL_nvidia"):
+        src = os.path.join(lib, "%s.so.%s" % (b, ver))
+        if os.path.exists(src) and not os.path.exists(os.path.join(lib, b + ".so.0")):
+            os.symlink(src, os.path.join(lib, b + ".so.0"))
+    os.makedirs("/usr/share/nvidia", exist_ok=True)
+    if os.path.exists(d + "/nvoptix.bin") and not os.path.exists("/usr/share/nvidia/nvoptix.bin"):
+        shutil.copy2(d + "/nvoptix.bin", "/usr/share/nvidia/nvoptix.bin")
+    tmpl = (glob.glob(d + "/nvidia_icd.json*") or [None])[0]
+    icd = json.loads(open(tmpl).read().replace("__NV_VK_ICD__", "libGLX_nvidia.so.0")) if tmpl else \
+        {"file_format_version": "1.0.0", "ICD": {"library_path": "libGLX_nvidia.so.0", "api_version": "1.3.0"}}
+    os.makedirs("/usr/share/vulkan/icd.d", exist_ok=True)
+    json.dump(icd, open("/usr/share/vulkan/icd.d/nvidia_icd.json", "w"), indent=1)
+    sh("ldconfig")
+    print("  copied %d libraries: %s" % (len(copied), ", ".join(copied)))
+    ok, out = ue_sees_gpu()
+    print(("✅ user ue now sees: " if ok else "❌ still no GPU for ue: ") +
+          "; ".join(l.strip() for l in out.splitlines() if "deviceName" in l or "ERROR" in l)[:300])
+print("\nray-tracing extensions:", {e: e in sh("runuser -u ue -- env -i HOME=/home/ue vulkaninfo 2>/dev/null | grep -o 'VK_KHR_[a-z_]*'")
+                                   for e in ("VK_KHR_ray_tracing_pipeline", "VK_KHR_acceleration_structure", "VK_KHR_ray_query")})
+
+# %% [markdown]
 # ## 5a · (optional) Download Unreal from your Epic link into Drive
 #
 # Skip this when the zip is already in your Drive. The file keeps Epic's own name (for example `Linux_Unreal_Engine_5.4.4.zip`), so the version is known.
@@ -273,6 +345,18 @@ except Exception:
         return os.environ.get(k)
 LAB = pipeline.Lab(work=WORK, hw=HW, plan=PLAN)
 LAB.live = live.Live(verbose=VERBOSE, visual=VISUAL, every=HEARTBEAT_S, disk_path=str(WORK)) if (VERBOSE or VISUAL) else None
+if GENTLE and HW["gpu"]:
+    os.nice(max(0, 10 - os.nice(0)))                  # this kernel and everything it starts yield to Colab's own services
+    sh("ionice -c 3 -p %d" % os.getpid())              # lowest disk priority, inherited the same way
+    if HW["cpus"] >= 8:
+        PLAN["shader_workers"] = min(PLAN.get("shader_workers") or HW["cpus"], HW["cpus"] - 4)
+    print("gentle: nice %d · %s shader workers" % (os.nice(0), PLAN.get("shader_workers")))
+if DRIVE_HEARTBEAT and Path("/content/drive/MyDrive").exists():
+    from x3due import heartbeat
+    if not (globals().get("HB_DRIVE") and HB_DRIVE.alive()):
+        Path(DRIVE_DIR).mkdir(parents=True, exist_ok=True)
+        HB_DRIVE = heartbeat.Heartbeat(DRIVE_DIR, WORK / "out", context=lambda: globals()).start()
+    print("💓 Drive heartbeat →", HB_DRIVE.dir)
 if not engine.tool("zstd") and HW["gpu"]:
     sh("apt-get install -y -qq zstd")      # multi-threaded compression for the Drive cache
 Path(DRIVE_DIR).mkdir(parents=True, exist_ok=True) if Path(DRIVE_DIR).parent.exists() else None
@@ -313,7 +397,7 @@ if ENGINE.get("version") and CACHE_ENGINE and ENGINE["source"] != "drive cache" 
 # %%
 #@title 6 · Cold and warm start { display-mode: "form" }
 if CACHE_DDC and Path(DRIVE_DIR).exists():
-    CARD["ddc_restore"] = pipeline.ddc_restore(LAB, DRIVE_DIR)
+    CARD["ddc_restore"] = pipeline.ddc_restore(LAB, DRIVE_DIR, ENGINE.get("version"))
     print("DDC:", CARD["ddc_restore"])
 LAB.settings["usd"] = USD == "auto"          # step 8 imports .usdc files: the USD Importer plugin must be on
 PROJ = LAB.write_project()
@@ -345,10 +429,297 @@ if ENGINE.get("version"):
     if CACHE_DDC and Path(DRIVE_DIR).exists() and SMOKE["cold"]["rc"] == 0 and SMOKE["cold"]["seconds"] > 120:
         # The global shaders are the expensive part (17 min on an A100, hours on a small runtime): keep them now,
         # not only at step 11, so a run that stops later still leaves a warm cache for the next one.
-        CARD["ddc_save_after_start"] = pipeline.ddc_save(LAB, DRIVE_DIR)
+        CARD["ddc_save_after_start"] = pipeline.ddc_save(LAB, DRIVE_DIR, ENGINE.get("version"))
         print("shader cache saved to Drive:", CARD["ddc_save_after_start"])
 else:
     SC.add("6 start", "RHI is Vulkan on the NVIDIA GPU", "SKIP", "no engine (step 5)")
+
+# %% [markdown]
+# ### 6c · Only if step 6 fails: find out why, and find a start that works
+#
+# Reads Vulkan as user `ue`, the engine's config edits, step 6's log and crash report (with the nearest function names for the crash stack), then tries a few ways of starting Unreal for at most `PROBE_SECONDS` each and keeps the first that works. Its report goes to `DRIVE_DIR/probe/`. (It found the 11 Nov 2026 A100 crash: the Nanite pool above Vulkan's 2 GB allocation, now capped in `tier.py`.)
+
+# %%
+#@title 6c · Unreal dies at start on this GPU: find out why, and find a start that works (≈ 3–6 min) { display-mode: "form" }
+# Run after step 6 fails. Read-only on your Drive except one report folder (probe/<time>_<gpu>/), which Claude can read.
+# It tries a few ways of starting Unreal, each for at most PROBE_SECONDS: a start that is still alive by then got past
+# the point where step 6 died (the renderer's start-up, ~10 s in), and is stopped there. With APPLY_WINNER it then keeps
+# the first start that worked, so step 6 can simply be run again.
+PROBE_SECONDS = 75     #@param {type:"integer"}
+APPLY_WINNER = True    #@param {type:"boolean"}
+
+import bisect, glob, json, os, re, shutil, subprocess, time
+from pathlib import Path
+from x3due import engine as E, pipeline, uerun
+
+assert "LAB" in globals() and (Path(LAB.engine_dir) / "Engine/Binaries/Linux/UnrealEditor").exists(), "run steps 1–5 first (no engine on disk)"
+LOGS = Path(LAB.out) / "logs"
+GPU = subprocess.run(["nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader"], capture_output=True, text=True).stdout.strip() \
+    if shutil.which("nvidia-smi") else "no nvidia-smi"
+STAMP = time.strftime("%Y-%m-%dT%H-%MZ", time.gmtime())
+SAVED = json.loads(json.dumps(LAB.settings, default=str))
+REPORT = {"stamp": STAMP, "gpu": GPU, "settings_before": SAVED, "variants": []}
+CRASH_RX = re.compile(r"Caught signal|Segmentation fault|Unhandled Exception|Assertion failed|appError called|Fatal error", re.I)
+BIN = Path(LAB.engine_dir) / "Engine/Binaries/Linux"
+CONF = Path(LAB.engine_dir) / "Engine/Config"
+
+
+def as_ue(cmd, timeout=180):
+    """Run a command as the user Unreal runs as, with Unreal's environment (the same Vulkan driver it sees)."""
+    full = ["runuser", "-u", LAB.user, "--", "env", "-i"] + ["%s=%s" % kv for kv in LAB.env().items()] + list(cmd)
+    try:
+        p = subprocess.run(full, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, p.stdout + p.stderr
+    except Exception as exc:
+        return -1, "%s: %s" % (type(exc).__name__, exc)
+
+
+def kill_leftovers():
+    """zenserver and the crash reporter outlive Unreal; a stale zenserver can hang the next start."""
+    subprocess.run(["pkill", "-TERM", "-u", LAB.user, "-f", "zenserver"], capture_output=True)   # let Zen close its store
+    time.sleep(2)
+    for pat in ("UnrealEditor", "ShaderCompileWorker", "CrashReportClient", "zenserver", "UnrealTraceServer"):
+        subprocess.run(["pkill", "-9", "-u", LAB.user, "-f", pat], capture_output=True)
+    time.sleep(1)
+
+
+def head(title):
+    print("\n" + "━" * 100 + "\n" + title + "\n" + "━" * 100)
+
+
+# ───────────────────────────────────────────── ① what Vulkan shows Unreal's user on this GPU
+head("① Vulkan as user %s · %s" % (LAB.user, GPU))
+if not shutil.which("vulkaninfo"):
+    subprocess.run("apt-get install -y -qq vulkan-tools", shell=True, capture_output=True)
+rc, VI = as_ue(["vulkaninfo"], timeout=120)
+
+
+def vi_get(rx):
+    m = re.search(rx, VI, re.M)
+    return m.group(1).strip() if m else None
+
+
+DEV = {k: vi_get(r"^\s*%s\s*=\s*(.+)$" % k) for k in ("deviceName", "deviceType", "apiVersion", "driverVersion")}
+QUEUES = sorted(set(re.findall(r"queueFlags\s*=\s*(.+)", VI)))
+EXTS = ["VK_KHR_swapchain", "VK_KHR_dynamic_rendering", "VK_KHR_maintenance4", "VK_EXT_descriptor_buffer", "VK_EXT_mutable_descriptor_type",
+        "VK_EXT_mesh_shader", "VK_EXT_shader_image_atomic_int64", "VK_KHR_fragment_shading_rate", "VK_KHR_buffer_device_address",
+        "VK_KHR_ray_tracing_pipeline", "VK_KHR_acceleration_structure", "VK_KHR_ray_query"]
+FEATS = ["geometryShader", "tessellationShader", "textureCompressionBC", "shaderInt64", "shaderFloat16", "shaderBufferInt64Atomics",
+         "shaderImageInt64Atomics", "bufferDeviceAddress", "descriptorBuffer", "meshShader", "taskShader", "descriptorIndexing",
+         "runtimeDescriptorArray", "multiDrawIndirect", "fillModeNonSolid", "samplerAnisotropy"]
+REPORT["vulkan"] = {"rc": rc, "device": DEV, "queues": QUEUES,
+                    "extensions": {x: (x in VI) for x in EXTS},
+                    "features": {f: vi_get(r"^\s*%s\s*=\s*(\w+)" % f) for f in FEATS}}
+print("device   : %(deviceName)s · %(deviceType)s · API %(apiVersion)s · driver %(driverVersion)s" % {k: v or "?" for k, v in DEV.items()})
+print("queues   : " + (" | ".join(QUEUES) if QUEUES else "none listed (vulkaninfo rc %s: %s)" % (rc, VI.strip().splitlines()[-1:] if VI.strip() else "")))
+print("graphics : " + ("✅ a queue family has QUEUE_GRAPHICS_BIT" if any("GRAPHICS" in q for q in QUEUES) else "❌ NO graphics queue: this GPU only offers compute through Vulkan"))
+print("ext      : " + "  ".join("%s %s" % (x.replace("VK_", ""), "✓" if v else "✗") for x, v in REPORT["vulkan"]["extensions"].items()))
+print("features : " + "  ".join("%s=%s" % (f, v) for f, v in REPORT["vulkan"]["features"].items() if v is not None))
+lic = subprocess.run("nvidia-smi -q | grep -i -E 'Virtualization Mode|License Status|Product Brand|GPU Operation Mode|MIG Mode' -A1 | head -20",
+                     shell=True, capture_output=True, text=True).stdout
+REPORT["nvidia_smi_q"] = lic
+print(lic.strip())
+
+# ───────────────────────────────────────────── ② the engine's ray-tracing / bindless edits and the project's RHI
+head("② Engine config edits (Epic's documented Vulkan ray-tracing edit) and what the project asks for")
+ORIGS = sorted(CONF.glob("**/*.x3due.orig"))
+CFG_KEYS = re.compile(r"^\s*(bSupportsRayTracingShaders|bSupportsPathTracing|BindlessSupport|BindlessResources|BindlessSamplers)\s*=.*$", re.M)
+for f in (CONF / "VulkanPC/DataDrivenPlatformInfo.ini", CONF / "Linux/BaseLinuxEngine.ini"):
+    if f.exists():
+        print("%-40s %s" % (f.relative_to(CONF), " · ".join(m.group(0).strip() for m in CFG_KEYS.finditer(f.read_text(errors="replace"))) or "(no RT/bindless keys)"))
+print("edited by the lab (originals kept): %s" % ([str(o.relative_to(CONF)) for o in ORIGS] or "none"))
+de = Path(LAB.project_dir) / "Config/DefaultEngine.ini"
+if de.exists():
+    print("project: " + " · ".join(l.strip() for l in de.read_text().splitlines() if re.match(r"\s*[+-]?TargetedRHIs|\s*r\.RayTracing=|\s*r\.Lumen\.HardwareRayTracing=", l)))
+print("lab settings: sm6 %(sm6)s · ray_tracing %(ray_tracing)s · bindless %(bindless)s · cvars %(cvars)s" % LAB.settings)
+SNAP = {p: p.read_text(errors="replace") for p in (CONF / "VulkanPC/DataDrivenPlatformInfo.ini", CONF / "Linux/BaseLinuxEngine.ini") if p.exists()}
+REPORT["engine_config"] = {"edited": [str(o) for o in ORIGS], "keys": {str(p): [m.group(0).strip() for m in CFG_KEYS.finditer(t)] for p, t in SNAP.items()}}
+
+
+def config_as_found():
+    for p, t in SNAP.items():
+        if p.read_text(errors="replace") != t:
+            p.write_text(t)
+
+
+# ───────────────────────────────────────────── ③ what step 6's log says just before the crash
+head("③ Step 6's log: Vulkan start-up and the last lines before the crash")
+LOG6 = sorted(LOGS.glob("smoke_*.log"), key=os.path.getmtime)
+LOG6 = LOG6[-1] if LOG6 else None
+if LOG6:
+    lines = LOG6.read_text(errors="replace").splitlines()
+    vk = [l for l in lines if re.search(r"LogVulkanRHI|LogRHI|LogInit: .*RHI|Profile|SM6|SM5", l) and not re.search(r"Display:\s+[-+] VK_", l)]
+    crash_at = next((i for i, l in enumerate(lines) if CRASH_RX.search(l)), len(lines))
+    print("log: %s (%d lines)" % (LOG6, len(lines)))
+    for l in vk[-45:]:
+        print("  " + l[:240])
+    print("  … the 25 lines before the crash:")
+    for l in lines[max(0, crash_at - 25): crash_at + 6]:
+        print("  " + l[:240])
+    REPORT["step6_log"] = {"path": str(LOG6), "vulkan_lines": vk[-80:], "before_crash": lines[max(0, crash_at - 60): crash_at + 40]}
+else:
+    print("no step 6 log under", LOGS)
+CR = sorted(glob.glob(str(Path(LAB.project_dir) / "Saved/Crashes/*")), key=os.path.getmtime)
+if CR:
+    cl = Path(CR[-1]) / "X3DLab.log"
+    if cl.exists():
+        tl = cl.read_text(errors="replace").splitlines()
+        hit = [l for l in tl if re.search(r"Unhandled Exception|Caught signal|SIGSEGV|invalid attempt|Assertion|Fatal", l)]
+        print("\ncrash report %s:\n  " % Path(CR[-1]).name + "\n  ".join(h[:300] for h in hit[:8]))
+        REPORT["crash_report_lines"] = hit[:20]
+
+# ───────────────────────────────────────────── ④ name the functions in the crash stack (no debug files needed)
+head("④ The crash stack with the nearest exported function names")
+STACK = pipeline.crash_stack(LAB, 8000)
+_SYMS = {}
+
+
+def nearest(lib, off):
+    so = BIN / lib if (BIN / lib).exists() else None
+    if not so:
+        return None
+    dbg = so.with_suffix(".debug")
+    if dbg.exists() and shutil.which("addr2line"):
+        out = subprocess.run(["addr2line", "-C", "-f", "-e", str(dbg), hex(off)], capture_output=True, text=True).stdout.split("\n")
+        if out and out[0] and out[0] != "??":
+            return "%s  [%s]" % (out[0], out[1] if len(out) > 1 else "")
+    if lib not in _SYMS:
+        nm = subprocess.run(["nm", "-D", "--defined-only", "-C", str(so)], capture_output=True, text=True).stdout
+        rows = []
+        for l in nm.splitlines():
+            parts = l.split(" ", 2)
+            if len(parts) == 3 and parts[1] in "TtWw":
+                try:
+                    rows.append((int(parts[0], 16), parts[2]))
+                except ValueError:
+                    pass
+        rows.sort()
+        _SYMS[lib] = ([a for a, _ in rows], [n for _, n in rows])
+    addrs, names = _SYMS[lib]
+    i = bisect.bisect_right(addrs, off) - 1
+    if i < 0:
+        return None
+    d = off - addrs[i]
+    return "%s +0x%x%s" % (names[i][:160], d, "   (far from it: an internal function after it)" if d > 0x4000 else "")
+
+
+NAMED = []
+for l in STACK.splitlines():
+    m = re.match(r"\s*(\S+?)!UnknownFunction\(0x([0-9a-fA-F]+)\)", l)
+    name = nearest(m.group(1), int(m.group(2), 16)) if m else None
+    NAMED.append(l.strip() + ("    ← " + name if name else ""))
+print("\n".join(NAMED) or "no crash stack under Saved/Crashes")
+REPORT["stack_named"] = NAMED
+
+# ───────────────────────────────────────────── ⑤ try a few starts
+head("⑤ Trying starts (each at most %d s; a start still alive then is past the crash point)" % PROBE_SECONDS)
+FRESH = Path("/content/x3due_probe") if Path("/content").exists() else Path(LAB.work) / "probe_fresh"
+VARIANTS = [("as step 6", {}),
+            # the shader cache and home restored from the L4 run (6b) are set aside: an empty HOME and local DDC
+            ("as step 6, empty home + shader cache", {"env": {"HOME": str(FRESH / "home"), "XDG_CONFIG_HOME": str(FRESH / "home/.config"),
+                                                         "UE-LocalDataCachePath": str(FRESH / "ddc")}})]
+if ORIGS:
+    VARIANTS.append(("SM6 + Epic's original engine config", {"epic_config": True}))
+VARIANTS += [("SM6 + async compute off", {"cvars": {"r.Vulkan.AllowAsyncCompute": 0}}),
+             ("SM5", {"sm6": False})]
+if ORIGS:
+    VARIANTS.append(("SM5 + Epic's original engine config", {"sm6": False, "epic_config": True}))
+VARIANTS.append(("no GPU (-nullrhi): control", {"nullrhi": True}))
+
+
+def setup(ch):
+    LAB.settings.clear()
+    LAB.settings.update(json.loads(json.dumps(SAVED)))
+    config_as_found()
+    if ch.get("epic_config"):
+        E.disable_vulkan_rt(LAB.engine_dir)
+        LAB.settings["ray_tracing"] = False
+    if ch.get("sm6") is False:
+        LAB.settings["sm6"] = False
+        LAB.settings["ray_tracing"] = False
+    LAB.settings["cvars"].update(ch.get("cvars", {}))
+    for k, v in ch.get("env", {}).items():
+        LAB.settings["env"][k] = v
+        if v.startswith("/") and not Path(v).exists():
+            Path(v).mkdir(parents=True, exist_ok=True)
+    if ch.get("env"):
+        subprocess.run(["chown", "-R", "%s:%s" % (LAB.user, LAB.user), str(FRESH)], capture_output=True)
+    LAB.write_project()
+
+
+for label, ch in VARIANTS:
+    kill_leftovers()
+    setup(ch)
+    cmd = pipeline.smoke_cmd(LAB)
+    if ch.get("nullrhi"):
+        cmd = [c for c in cmd if c not in ("-vulkan", "-sm6", "-sm5")] + ["-nullrhi"]
+    LAB.own()
+    log = LOGS / ("probe_%s.log" % re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_"))
+    res = uerun.run(cmd, log, user=LAB.user, env_vars=LAB.env(), timeout=PROBE_SECONDS)
+    text = log.read_text(errors="replace") if log.exists() else ""
+    timed_out = str(res.get("killed") or "").startswith("timeout")
+    crash = next((l.strip() for l in text.splitlines() if CRASH_RX.search(l)), None) or (
+        "exit code %s" % res["rc"] if res["rc"] not in (0, None) and not timed_out else None)
+    ok = not crash and (timed_out or res["rc"] == 0)
+    platform = (re.findall(r"\b(VULKAN_SM6|VULKAN_SM5)\b", text) or ["?"])[-1]
+    compiling = "Using Local Shader Compiler" in text or "shader autogen file written" in text.lower()
+    row = {"label": label, "change": ch, "ok": ok, "rc": res["rc"], "seconds": res["seconds"], "stopped_by_probe": timed_out,
+           "crash": crash, "platform": platform, "compiling_shaders": compiling,
+           "vram_peak_mb": (res.get("gpu") or {}).get("peak_mem_mb"), "log": str(log)}
+    REPORT["variants"].append(row)
+    print("%s %-38s rc %-5s %5.0f s · %-11s · %s%s" % ("✅" if ok else "❌", label, res["rc"], res["seconds"], platform,
+          "alive at %d s, stopped" % PROBE_SECONDS if timed_out and ok else ("quit cleanly" if ok else crash[:110]),
+          " · shader compile started" if compiling else ""))
+kill_leftovers()
+
+# ───────────────────────────────────────────── ⑥ keep the first start that worked
+head("⑥ Verdict")
+gpu_wins = [r for r in REPORT["variants"] if r["ok"] and not r["change"].get("nullrhi")]
+LAB.settings.clear()
+LAB.settings.update(json.loads(json.dumps(SAVED)))
+config_as_found()
+if not gpu_wins:
+    null_ok = any(r["ok"] for r in REPORT["variants"] if r["change"].get("nullrhi"))
+    REPORT["verdict"] = "no Vulkan start works on this GPU" + (" (the engine itself starts: -nullrhi is fine)" if null_ok else "")
+    print("❌ " + REPORT["verdict"] + ".\n   Settings left as they were. The report below is on your Drive for Claude to read.\n"
+          "   If ① shows no graphics queue, this A100 cannot draw with Vulkan at all: an L4 or G4 runtime can.")
+    LAB.write_project()
+else:
+    w = gpu_wins[0]
+    REPORT["verdict"] = "works: " + w["label"]
+    if w["label"] == "as step 6":
+        print("✅ Step 6's own start works now (the crash did not come back: likely a stale zenserver or a half-written cache).\n"
+              "   Nothing changed. Run step 6 again.")
+        LAB.write_project()
+    elif APPLY_WINNER:
+        setup(w["change"])
+        if w["change"].get("sm6") is False and isinstance(globals().get("PLAN"), dict):
+            PLAN.setdefault("notes", []).append("6c: this GPU starts only on Shader Model 5 (VULKAN_SM5)")
+        print("✅ Kept: %s. Project and engine config now set that way (lab settings: sm6 %s · ray_tracing %s · cvars %s).\n"
+              "   Run step 6 again: the cold start compiles the global shaders for this setting (about 15–20 min on an A100)."
+              % (w["label"], LAB.settings["sm6"], LAB.settings["ray_tracing"], LAB.settings["cvars"])
+              + ("\n   Unreal now uses an empty home and shader cache under %s (the cache restored from the L4 was the trouble)." % FRESH
+                 if w["change"].get("env") else ""))
+    else:
+        print("✅ %s works. APPLY_WINNER is off, so nothing changed." % w["label"])
+        LAB.write_project()
+REPORT["settings_after"] = json.loads(json.dumps(LAB.settings, default=str))
+globals().setdefault("CARD", {}).setdefault("probe_6c", []).append({k: REPORT[k] for k in ("stamp", "gpu", "verdict")} | {"variants": [
+    {k: r[k] for k in ("label", "ok", "rc", "seconds", "platform", "crash")} for r in REPORT["variants"]]})
+
+# ───────────────────────────────────────────── ⑦ the report on Drive (data out only)
+try:
+    if Path(DRIVE_DIR).exists():
+        d = Path(DRIVE_DIR) / "probe" / ("%s_%s" % (STAMP, re.sub(r"[^A-Za-z0-9]+", "-", GPU.split(",")[0]).strip("-")))
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "report.json").write_text(json.dumps(REPORT, indent=1, default=str))
+        (d / "vulkaninfo.txt").write_text(VI[-400000:])
+        for p in [LOG6] + [Path(r["log"]) for r in REPORT["variants"]]:
+            if p and Path(p).exists():
+                (d / Path(p).name).write_text("\n".join(Path(p).read_text(errors="replace").splitlines()[-3000:]))
+        print("\nreport on Drive:", d)
+except Exception as exc:
+    print("(could not write the Drive report: %s)" % exc)
 
 # %% [markdown]
 # ## 7 · Scenes in, X3D → glTF (the Foundry's leg)
@@ -586,7 +957,7 @@ if Path(DRIVE_DIR).exists():
             shutil.copy(f, dst)
     print("saved to", dst)
     if CACHE_DDC and ENGINE.get("version"):
-        print("DDC to Drive:", pipeline.ddc_save(LAB, DRIVE_DIR))
+        print("DDC to Drive:", pipeline.ddc_save(LAB, DRIVE_DIR, ENGINE.get("version")))
 print("run card:", CARD_PATH)
 
 # %% [markdown]
