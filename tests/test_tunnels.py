@@ -56,3 +56,53 @@ def test_ngrok_token_names(monkeypatch):
     assert tunnels.ngrok_token() == "old-notebook-name"
     monkeypatch.setenv("NGROK_AUTHTOKEN", "documented-name")
     assert tunnels.ngrok_token() == "documented-name"
+
+
+def _fake_pyngrok(monkeypatch, config_version, accepts):
+    """A stand-in pyngrok whose connect() accepts only one of url=/domain=, like the real agent APIs."""
+    import sys, types
+    calls = []
+    class Conf:
+        pass
+    c = Conf()
+    if config_version is not None:
+        c.config_version = config_version
+    conf = types.SimpleNamespace(get_default=lambda: c)
+    def connect(port, proto, **kw):
+        calls.append(kw)
+        bad = [k for k in kw if k in ("url", "domain") and k != accepts]
+        if bad:
+            raise RuntimeError('API returned 400: field %s not found in type config.Endpoint' % bad[0])
+        return types.SimpleNamespace(public_url="https://x.ngrok-free.app")
+    ngrok = types.SimpleNamespace(connect=connect)
+    pkg = types.ModuleType("pyngrok"); pkg.conf = conf; pkg.ngrok = ngrok
+    monkeypatch.setitem(sys.modules, "pyngrok", pkg)
+    return calls
+
+
+def test_ngrok_connect_pyngrok9_sends_url(monkeypatch):
+    from x3dlab.tunnels import ngrok_connect
+    calls = _fake_pyngrok(monkeypatch, "3", "url")
+    ngrok_connect(8765, "https://my-name.ngrok-free.app/")
+    assert calls == [{"url": "https://my-name.ngrok-free.app"}]
+
+
+def test_ngrok_connect_old_pyngrok_sends_domain(monkeypatch):
+    from x3dlab.tunnels import ngrok_connect
+    calls = _fake_pyngrok(monkeypatch, None, "domain")
+    ngrok_connect(8765, "my-name.ngrok-free.app")
+    assert calls == [{"domain": "my-name.ngrok-free.app"}]
+
+
+def test_ngrok_connect_falls_back_once_when_the_guess_is_wrong(monkeypatch):
+    from x3dlab.tunnels import ngrok_connect
+    calls = _fake_pyngrok(monkeypatch, "3", "domain")      # says v3 but its agent still wants domain=
+    ngrok_connect(8765, "my-name.ngrok-free.app")
+    assert calls == [{"url": "https://my-name.ngrok-free.app"}, {"domain": "my-name.ngrok-free.app"}]
+
+
+def test_ngrok_connect_without_domain_sends_neither(monkeypatch):
+    from x3dlab.tunnels import ngrok_connect
+    calls = _fake_pyngrok(monkeypatch, "3", "url")
+    ngrok_connect(8765, "")
+    assert calls == [{}]
