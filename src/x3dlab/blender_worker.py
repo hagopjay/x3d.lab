@@ -317,7 +317,69 @@ def task_render(t):
             "counts": snapshot()["counts"], "camera_info": camera_info(scn)}
 
 
-KINDS = {"probe": task_probe, "roundtrip": task_roundtrip, "render": task_render, "import": task_import}
+def _shared_meshes():
+    """Meshes used by more than one object: X3D DEF/USE instancing as Blender sees it."""
+    return sum(1 for m in bpy.data.meshes if m.users > 1)
+
+
+def _smooth_faces():
+    """Faces shaded smooth. X3D draws Sphere, Cylinder and Cone smooth; an importer that leaves them flat shows facets
+    in Blender and writes per-face normals to every format after it."""
+    return sum(1 for m in bpy.data.meshes for p in m.polygons if p.use_smooth)
+
+
+def _flat_meshes():
+    """Meshes of 16 faces or more with not one face shaded smooth (a sphere or cylinder imported faceted), by name."""
+    return sorted(m.name for m in bpy.data.meshes if len(m.polygons) >= 16 and not any(p.use_smooth for p in m.polygons))
+
+
+def _export_gltf(out, fmt):
+    kw = {"filepath": out, "export_format": "GLB" if fmt == "glb" else "GLTF_SEPARATE"}
+    # lights and cameras are off by default; loose edges and points too (X3D lines and point sets would vanish)
+    for extra in ({"export_lights": True, "export_cameras": True, "export_loose_edges": True, "export_loose_points": True},
+                  {"export_lights": True, "export_cameras": True}, {}):   # option names differ between Blender versions
+        try:
+            return bpy.ops.export_scene.gltf(**kw, **extra)
+        except TypeError:
+            continue
+    return bpy.ops.export_scene.gltf(**kw)
+
+
+def task_convert(t):
+    """Import X3D, export another format (glb, gltf, usd), import that back into an empty scene.
+    The counts before and after say what the trip through the other format kept; the file goes to that format's own
+    validator and renderers outside Blender."""
+    fmt, out = t.get("format", "glb"), t["out"]
+    fresh()
+    imp, ti = do_import(t["src"])
+    if "FINISHED" not in imp:
+        return {"error": "import returned %s" % imp}
+    res = {"format": fmt, "import": imp, "import_s": round(ti, 3), "counts": snapshot()["counts"], "shared_meshes": _shared_meshes(),
+           "smooth_faces": _smooth_faces(), "flat_meshes": _flat_meshes()}
+    t0 = time.time()
+    if fmt in ("glb", "gltf"):
+        exp = _export_gltf(out, fmt)
+    elif fmt in ("usd", "usda", "usdc"):
+        if not hasattr(bpy.ops.wm, "usd_export"):
+            return dict(res, error="this Blender build has no USD exporter")
+        exp = bpy.ops.wm.usd_export(filepath=out, export_materials=True)
+    else:
+        return dict(res, error="unknown format %r" % fmt)
+    res.update(export=sorted(exp), export_s=round(time.time() - t0, 3), output=out,
+               bytes=os.path.getsize(out) if os.path.exists(out) else 0)
+    if "FINISHED" not in exp or not res["bytes"]:
+        res["error"] = "export returned %s (%d bytes)" % (sorted(exp), res["bytes"])
+        return res
+    fresh()
+    try:
+        back = bpy.ops.import_scene.gltf(filepath=out) if fmt in ("glb", "gltf") else bpy.ops.wm.usd_import(filepath=out)
+        res["reimport"] = {"result": sorted(back), "counts": snapshot()["counts"], "shared_meshes": _shared_meshes()}
+    except Exception as exc:
+        res["reimport"] = {"error": str(exc)[:300]}
+    return res
+
+
+KINDS = {"probe": task_probe, "roundtrip": task_roundtrip, "render": task_render, "import": task_import, "convert": task_convert}
 
 try:
     for task in JOB["tasks"]:

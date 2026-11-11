@@ -81,6 +81,7 @@ class HogConfig:
     enable_graphics: bool = True            # install the matching NVIDIA graphics userspace first (x3dlab.graphics)
     blender: bool = True
     blender_versions: list = field(default_factory=lambda: ["X3D40", "X3D41"])
+    formats: list = field(default_factory=list)   # other formats Blender converts each scene to: "glb" (x3dlab.formats)
     render_samples: int = 16
     render_size: list = field(default_factory=lambda: [320, 180])
     blender_chunk: int = 8                  # tasks per Blender process; a crash only costs one chunk
@@ -340,7 +341,8 @@ async def _validate_all(lab, items: list[Item], cfg: HogConfig, run: HogRun) -> 
 _RESOURCE = re.compile(r"Couldn't load (URL|image)|Failed to load resource|net::ERR_|404")
 
 
-async def _xite_all(hb, items: list[Item], run: HogRun, assets: Path | None = None) -> None:
+async def _xite_all(hb, items: list[Item], run: HogRun, assets: Path | None = None, shots: Path | None = None) -> None:
+    """X_ITE loads every scene on the flat key background; with `shots`, the pictures are kept (shots/<id>.xite.png)."""
     hb.assets = assets
     for it in items:
         m = run.matrix.setdefault(it.id, {})
@@ -348,6 +350,11 @@ async def _xite_all(hb, items: list[Item], run: HogRun, assets: Path | None = No
         real = [e for e in r.errors if not _RESOURCE.search(e)]
         m["x_ite"] = {"ok": r.ok, "errors": real[:3], "resource_errors": len(r.errors) - len(real), "warnings": len(r.warnings),
                       "ms": round(r.t.get("total", 0) or r.ms, 1), "coverage": _coverage(r.png) if r.ok else None}
+        if shots is not None and r.png:
+            shots.mkdir(parents=True, exist_ok=True)
+            f = shots / ("%s.xite.png" % re.sub(r"[^A-Za-z0-9._@-]", "_", it.id))
+            f.write_bytes(r.png)
+            m["x_ite"]["png"] = os.path.relpath(f, run.dir)
 
 
 def _blender_tasks(items: list[Item], cfg: HogConfig, scene_dir: Path, backend: str) -> list[dict]:
@@ -359,6 +366,9 @@ def _blender_tasks(items: list[Item], cfg: HogConfig, scene_dir: Path, backend: 
         for bv in cfg.blender_versions:
             tasks.append({"kind": "roundtrip", "src": str(src), "version": bv, "generations": 1,
                           "out_prefix": str(scene_dir / ("%s.rt" % src.stem)), "_item": it.id, "_what": "roundtrip:" + bv})
+        for fmt in cfg.formats:
+            tasks.append({"kind": "convert", "src": str(src), "format": fmt, "out": str(scene_dir / ("%s.%s" % (src.stem, fmt))),
+                          "_item": it.id, "_what": "convert:" + fmt})
         if it.visual:
             tasks.append({"kind": "render", "src": str(src), "out_png": str(scene_dir / ("%s.cycles.png" % src.stem)),
                           "backend": backend, "samples": int(cfg.render_samples), "resolution": list(cfg.render_size),
@@ -402,7 +412,8 @@ def _blender_all(lab, items: list[Item], cfg: HogConfig, run: HogRun) -> None:
         log = [ln for ln in r.get("log", []) if ln.strip()][:5]
         what = t["_what"]
         if what == "import":
-            m["blender_import"] = {"ok": not err, "error": err[:240], "counts": res.get("counts"), "log": log}
+            m["blender_import"] = {"ok": not err, "error": err[:240], "counts": res.get("counts"), "log": log,
+                                   "unsupported": sorted(set(re.findall(r'unsupported type "([^"]+)"', "\n".join(r.get("log", [])))))}
         elif what.startswith("roundtrip:"):
             bv = what.split(":", 1)[1]
             g = (res.get("generations") or [{}])[0]
@@ -412,6 +423,14 @@ def _blender_all(lab, items: list[Item], cfg: HogConfig, run: HogRun) -> None:
                 entry["file"] = os.path.relpath(out, run.dir)
                 entry["types"] = _node_types(Path(out).read_text(encoding="utf-8", errors="replace"))
             m["blender_rt_" + bv] = entry
+        elif what.startswith("convert:"):
+            fmt = what.split(":", 1)[1]
+            out = res.get("output")
+            m["convert_" + fmt] = {"ok": not err, "error": err[:240], "bytes": res.get("bytes"), "counts": res.get("counts"),
+                                   "shared_meshes": res.get("shared_meshes"), "reimport": res.get("reimport"),
+                                   "smooth_faces": res.get("smooth_faces"), "flat_meshes": res.get("flat_meshes"),
+                                   "export_s": res.get("export_s"),
+                                   "file": os.path.relpath(out, run.dir) if out and os.path.exists(out) else None}
         elif what == "render":
             cov = (res.get("pixels") or {}).get("covered")
             m["cycles"] = {"ok": not err, "error": err[:240], "covered": cov, "seconds": res.get("seconds"),

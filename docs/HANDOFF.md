@@ -173,3 +173,49 @@ Colab's containers carry NVIDIA's compute userspace (CUDA, NVML, OptiX ray traci
 - Whether it also fixes the OptiX denoiser depends on the package shipping `nvoptix.bin` for that driver; the probe reports it. **Unverified on Colab** until the first run.
 
 `notebooks/00_GPU_Browser_Playground.ipynb` (Track A, no package) teaches the same thing hands-on: before/after, two Chromes side by side, editable WGSL. In this sandbox (no GPU) every step runs with both columns on SwiftShader; numbers there: WGSL matmul N=256 0.3 GFLOP/s, 100k triangles 1.5–1.6 s/frame, X_ITE 100 boxes ~85 frames/s uncapped.
+
+## 11. The Foundry (notebook 06, `x3dlab.foundry`, `lab.foundry(cfg)`)
+
+The hog (§9) measures one fixed corpus once. The Foundry is the loop that keeps going: **target → generate → referee → engines → claims → shrink → write → learn**, one round at a time, with `state.json` carrying what was learned (per-node attempts and disagreements, per-model rules, the claims already reported) into the next round.
+
+**Pieces, and where they live**
+
+| Piece | Module | Notes |
+|---|---|---|
+| targeting | `foundry.choose_targets` | score = novelty 3/(1+tried) + new-in-4.1 +2 + x3d.loom `todo`/`gap` +2 (`claimed` +1) + disputed last round +1.5 each (≤3) + models fail it +1.5 + noise; at most 2 nodes per component per round. `nodes=[...]` pins them |
+| prompts | `foundry.prompt_for` | the node is the centrepiece ("focus"), 4 of its settable fields away from defaults, a camera framing line, and the `<component>` line when the node is outside Immersive (needed the `uom.profile_nodes` fix below) |
+| generation | `duel.run_async` | per-version duels; `DuelConfig.rules` puts each model's lessons in its system prompt. `duel.OFFLINE` now holds the keyless contenders: `sample` and the Foundry's `corpus` (x3d.loom fixtures + the 4.1 examples, a planted defect in 2 of 3, clean on repair) |
+| referee | `foundry.judge` | fork verdict (XSD layer + semantic layer) + lxml with the version's XSD + `hog.uom_allows` for placement complaints. `effective` = XSD-valid or UOM-allowed; `sound` = effective and no fork semantic error. Drafts are judged too, so validator disagreements are found even when the repair turn fixes the scene |
+| engines | `foundry._engines` (+ `hog._xite_all/_blender_all`) | X_ITE (pictures kept under `shots/`), Blender import + X3D40 round trip (export judged by the fork **and** the XSD), glTF, the bridge |
+| glTF engine | `formats.py` + worker task `convert` | Blender imports X3D, exports `.glb` (lights, cameras, loose edges and points on), imports it back into an empty scene (counts before/after, shared meshes, smooth faces); the Khronos `gltf-validator` (npm, 380 kB) validates it; X_ITE draws a small X3D that Inlines the glb under the original's Viewpoint (with its Transform chain) and NavigationInfo. Same renderer, same camera: what changes is what the trip lost. `formats.EXPECTED_LOSS` lists what glTF has no place for (sensors, interpolators, Text, Billboard, Switch, LOD, Background, Fog, …) |
+| bridge engine | `foundry.loom_run/loom_shots` | writes fixtures under `fixtures/foundry/` of the checkout, runs the bridge's own `run-tests.js` (names like `foundry/<Name>` work because it uses `path.join`), removes them. A probe is `[{"settle":1},{"shot":1}]`: one whole 320×240 picture per engine |
+| claims | `foundry.find_claims` | `fork-rejects-valid`, `fork-accepts-invalid`, `xsd-stricter-than-uom`, `xite-error`, `blender-import`, `blender-unsupported`, `blender-flat`, `blender-export-invalid`, `gltf-invalid`, `gltf-lost`, `gltf-colour`, `loom-error`, `loom-differs`, `loom-colour`. One claim per signature per round; `expected` when a known limit explains it |
+| shrinking | `shrink.py` + `foundry.keep_for` | delta debugging: remove nodes, unwrap wrappers (Group/Transform that only carry the culprit), drop attributes, halve long lists keeping whole tuples, drop meta. Every cut must stay *sound* (full referee) and keep the claim true with the engine that made it. Cheap claims first. Claims that shrink to the same scene merge (`same_as`) |
+| artifacts | `write_loom_fixtures`, `write_mcp_tests`, `write_issues` | in `kit/` mirroring the repos, zipped |
+| learning | `learn_rules` | error kinds of the drafts → rule text (`RULE_TEXT`) + the model's own last message; ≤ 8 per model, newest and most frequent first. Nothing is learned from a draft the XSD/UOM accept (the fork was wrong, not the model) |
+
+**Pictures are compared by silhouette match, not IoU.** `formats.match` is an F-score of "covered here, covered within 2 px there", both ways. IoU said the bridge's Arc2D was 0.45 wrong; it was a one-pixel shift of a one-pixel line (match 1.0). Colour is judged only when the shapes agree (`formats.colour_kind`: mean change > 64 of 255 → darker / brighter / hue), because Phong (X_ITE) and PBR (Babylon, glTF) shade differently by design.
+
+**Loom fixtures** are pinned to X_ITE: `pick_points` takes centres of flat 5×5 patches (no edges, so anti-aliasing cannot move them) spread over a 4×3 grid, 10 covered (tolerance 48) + 4 key background (24); a second runner pass drops any pixel X_ITE does not reproduce itself. The scene keeps a flat magenta Background so coverage reads at a glance. They go to `fixtures/foundry/`, which the default run (`fixtures/*.test.json`) does not read: no red CI, run by name.
+
+**x3d_mcp tests** follow the repo's style (`sys.path` to `src`, `validate_xml(xml, version)`), one strict xfail per validator claim, and are run here against the fork's own `validate_xml` before they are written: a case that does not reproduce through it is dropped.
+
+### First rounds in the sandbox (corpus contender, 8 pinned nodes, SwiftShader, bpy 5.2.3, 10 Nov 2026)
+
+Round time on this CPU box: ~5 min (generate 3 s, referee 5 s, engines 42 s of which the bridge runner 30 s, shrink 2–3 min, write 1.5 min). Rounds 2 and 3 re-found every round-1 claim and treated the reported ones as known.
+
+| For | Claim | Evidence |
+|---|---|---|
+| x3d.loom | **wrong colours: shapes come out black** (TriangleFanSet, IndexedQuadSet, TwoSidedMaterial merged into one claim) | silhouettes match 1.0, mean colour change 153/255, brightness ×0.00. By hand: an IndexedTriangleSet stays black with no NavigationInfo, with `headlight="true"`, with an explicit DirectionalLight, and with only `emissiveColor`; a Box is lit but off. Shrunk to Group › Shape › Material + TriangleFanSet |
+| x3d.loom (runner) | **X_ITE's "Loading 1 file" toast is part of the reference picture**: the runner's X_ITE scene page keeps notifications on, so a scene whose only node is an EnvironmentLight "covers" the top right corner. The shrinker cut an EnvironmentLight claim down to exactly that. Probes and fixtures now start with an X_ITE-only `js` step that turns notifications off and hides the toast; the runner could set `notifications=false` on its `x3d-canvas` instead | with the toast hidden, EnvironmentLight + Box goes from match 0.68 to 1.0 |
+| x3d.loom | **Viewpoint position ignored in scene mode**: a scene with `<Viewpoint position="0 0 6"/>` is drawn as from 0 0 10 (0.6× size) | the shrinker cut the Tangent claim to `<Viewpoint position="0 0 6"/>` + a bare IndexedTriangleSet, and (once the toast below was hidden) the EnvironmentLight claim to `<Viewpoint position="0 0 6"/>` + a bare Sphere: neither 4.1 node is the cause. By hand: the same picture at 6 and at 10. Could be the runner's `__bodyShot` camera rather than the bridge |
+| x3d-blender-io | **IndexedQuadSet and Arc2D are skipped on import** (`ImportX3D warning: unsupported type`): an empty Blender scene, an empty glTF | worker log; glTF trip match 0.0 marked *expected* because of it |
+| x3d-blender-io | **Sphere and Cylinder are imported flat-shaded** (X3D draws them smooth): meshes `Shape_Sphere`, `Shape_Cylinder` have no smooth face; the glb gets per-face normals (sphere 250 → 968 vertices after the trip) | `convert` task `flat_meshes`; X_ITE shows the glTF sphere faceted |
+| x3d-blender-io | **TwoSidedMaterial is ignored without a warning**: a red and a green shape come back as one grey default material (Blender has 1 material for 2) | glTF trip keeps the silhouettes (match 1.0) but the colours change by 128/255; the new `gltf-colour` claim. Phong against PBR alone moves colours 30–50/255 (TriangleFanSet 52, Tangent 34), under the 64 threshold |
+| X3D XSD / x3d_mcp | ComposedTexture3D (`xs:sequence` for `xs:choice`) and LayoutGroup placement: the hog's findings, now as **verified strict-xfail tests** for x3d_mcp | both XFAIL through `validate_xml` |
+| glTF trip | clean otherwise: every Blender export passes the Khronos validator; TriangleFanSet, TwoSidedMaterial, Tangent, EnvironmentLight, ComposedTexture3D survive with match 1.0 | |
+| x3dlab | `uom.profile_nodes("Immersive")` was always empty: the profile file pads that entity name with two spaces | fixed (`\s+`), 4.1 falls back to the 4.0 profile file |
+
+**Not yet seen on Colab:** a round with NVIDIA models (the real point: the corpus contender only proves the plumbing), and the bridge runner on a GPU Chrome.
+
+**Next:** USD as a second format engine (same `convert` task, `format="usd"`; check on Colab whether `usd-core` has a Python 3.13 wheel and whether the bpy wheel has `wm.usd_export`); a `--fixtures-dir` option in x3d.loom's runner so probes never touch the checkout; feed `same_as` merges back into targeting (one cause, many nodes).
