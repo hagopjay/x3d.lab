@@ -53,3 +53,28 @@ def test_enable_refuses_without_exact_match(monkeypatch):
 def test_gpu_args_have_no_surface_flag():
     assert "--disable-vulkan-surface" in browser.GPU_ARGS and "--use-angle=vulkan" in browser.GPU_ARGS
     assert "--disable-vulkan-surface" not in browser.CHROME_ARGS
+
+
+def test_unpack_downloads_the_graphics_trio_only(monkeypatch, tmp_path):
+    calls = []
+
+    class R:
+        returncode, stdout, stderr = 0, "", ""
+
+    def fake_sub_run(cmd, cwd=None, capture_output=True, text=True, timeout=0):
+        calls.append(cmd)
+        if cmd[:2] == ["apt-get", "download"]:
+            (tmp_path / (cmd[2].replace("=", "_") + ".deb")).write_text("x")
+        return R()
+    monkeypatch.setattr(graphics.subprocess, "run", fake_sub_run)
+    monkeypatch.setattr(graphics, "_run", lambda cmd, timeout=0: (calls.append(cmd), R())[1])
+    out = graphics.unpack(("libnvidia-gl-580", "580.82.07-0ubuntu1"), str(tmp_path))
+    dl = [c[2] for c in calls if c[:2] == ["apt-get", "download"]]
+    assert dl == ["libnvidia-gl-580=580.82.07-0ubuntu1", "libnvidia-gpucomp-580=580.82.07-0ubuntu1",
+                  "libnvidia-common-580=580.82.07-0ubuntu1"]
+    assert not [c for c in calls if "install" in c or any("compute" in str(x) or "cfg1" in str(x) for x in c)]   # never CUDA's packages
+    assert sum(1 for c in calls if c[:2] == ["dpkg", "-x"]) == 3 and ["ldconfig"] in calls and len(out["unpacked"]) == 3
+    calls.clear()
+    graphics.unpack(("libnvidia-gl-580-server", "580.82.07-0ubuntu0.24.04.1"), str(tmp_path))
+    assert [c[2].split("=")[0] for c in calls if c[:2] == ["apt-get", "download"]] == [
+        "libnvidia-gl-580-server", "libnvidia-gpucomp-580-server", "libnvidia-common-580-server"]

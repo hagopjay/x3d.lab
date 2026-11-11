@@ -44,7 +44,9 @@ print("NVIDIA graphics libraries:", "present" if "libGLX_nvidia" in sh("ldconfig
 # %% [markdown]
 # ## 2 · Install the graphics half of the NVIDIA driver
 #
-# The compute driver (`nvidia-smi`, CUDA) is there; the graphics userspace (Vulkan ICD, GL libraries) is not. The package `libnvidia-gl-<branch>` adds it, but **only at exactly the same version as the driver**: a different version would break the GPU for everything, so this cell looks for an exact match and installs nothing otherwise.
+# The compute driver (`nvidia-smi`, CUDA) is there; the graphics userspace (Vulkan ICD, GL libraries) is not. The package `libnvidia-gl-<branch>` carries it, but **only at exactly the same version as the driver** will do: a different version would not talk to the driver, so this cell looks for an exact match and changes nothing otherwise.
+
+Why not just `apt-get install` it? Try it: apt wants to pull in `libnvidia-compute`, `-decode`, `-cfg1`, ... at other versions, which would replace the CUDA libraries Colab put there. Instead we **download** the three graphics packages and **unpack** their files (`dpkg -x`): no dependency solver, CUDA untouched. (On a throwaway runtime that is fine; on your own machine, use your distribution's driver packages.)
 
 # %%
 #@title 2 · Install libnvidia-gl (exact driver version) and vulkan-tools { display-mode: "form" }
@@ -63,8 +65,16 @@ else:
             if re.match(r"^(\d+:)?%s([-~+].*)?$" % re.escape(version), v):
                 pick = pick or (pkg, v)
     if pick:
-        print("installing %s=%s ..." % pick)
-        sh("apt-get install -y -qq --no-install-recommends %s=%s vulkan-tools" % pick, 900)
+        pkg, v = pick
+        suffix = "-server" if pkg.endswith("-server") else ""
+        names = ["libnvidia-gl-%s%s" % (major, suffix), "libnvidia-gpucomp-%s%s" % (major, suffix), "libnvidia-common-%s%s" % (major, suffix)]
+        os.makedirs("/tmp/nvgl", exist_ok=True)
+        for n in names:
+            print("download %s=%s" % (n, v), "ok" if subprocess.run(["apt-get", "download", "%s=%s" % (n, v)], cwd="/tmp/nvgl",
+                                                                    capture_output=True).returncode == 0 else "(not found)")
+        for deb in sorted(f for f in os.listdir("/tmp/nvgl") if f.endswith(".deb")):
+            sh("dpkg -x /tmp/nvgl/%s /" % deb)           # unpack the files; apt's records stay as they were
+        sh("ldconfig"); sh("apt-get install -y -qq vulkan-tools", 600)
     else:
         print("No package at exactly %s in the apt sources: skipping (a mismatched version would break the driver)." % version)
 devices = re.findall(r"deviceName\s*=\s*(.+)", sh("vulkaninfo --summary 2>/dev/null"))
