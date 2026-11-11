@@ -412,7 +412,7 @@ def _facet_colour(base_rgba, N, V, vview, vobj, L4, uni):
     fr = rnd3i(cq[:3] + np.array([cq[3], 2 * cq[3], 3 * cq[3]]))
     fr2 = rnd3i(cq[[2, 0, 1]] + np.array([91, 17, 53]))
     fid = fr[0]
-    NdV = (N * V).sum(-1)
+    NdV = np.clip((N * V).sum(-1), 0.0, 1.0)
     base = base_rgba[:3]
     tint = base / max(base.max(), 1e-3)
     hiHue = tint + (np.array([1.0, 0.86, 0.58]) - tint) * 0.5
@@ -964,7 +964,7 @@ BAKES = {
 _DOF = {"r.DepthOfFieldQuality": 2}
 GRADES = {
     # fidelity: as close to X_ITE's still as Unreal gets (no bloom, no lens, linear-ish)
-    "fidelity": {"post": {"bloom_intensity": 0.0, "vignette_intensity": 0.0, "film_grain_intensity": 0.0}, "headlight": True},
+    "fidelity": {"post": {"bloom_intensity": 0.0, "vignette_intensity": 0.0, "film_grain_intensity": 0.0}, "headlight": False},
     # cinematic: the emissive ribbons light the gold (Lumen), filmic bloom, a lens
     "glow": {"post": {"bloom_intensity": 1.0, "bloom_threshold": 0.8, "vignette_intensity": 0.25}, "headlight": False, "light_scale": 1.5},
     "film": {"post": {"bloom_intensity": 0.7, "bloom_threshold": 1.0, "vignette_intensity": 0.4, "film_grain_intensity": 0.08,
@@ -973,6 +973,14 @@ GRADES = {
               "light_scale": 1.3, "aperture": 2.0, "focus": "auto", "cvars": _DOF},
     "warm": {"post": {"bloom_intensity": 0.9, "bloom_threshold": 0.8, "vignette_intensity": 0.3, "white_temp": 7500.0},
              "headlight": False, "light_scale": 1.3},
+    # extreme: everything Unreal's Lumen has, for hero stills (8K, many samples): the GPU earns its keep here
+    "extreme": {"post": {"bloom_intensity": 0.8, "bloom_threshold": 0.9, "vignette_intensity": 0.3, "lumen_scene_lighting_quality": 4.0,
+                         "lumen_scene_detail": 4.0, "lumen_final_gather_quality": 4.0, "lumen_reflection_quality": 4.0,
+                         "lumen_max_trace_distance": 20000.0},
+                "headlight": False, "light_scale": 1.3,
+                "cvars": {"r.Bloom.Quality": 5, "r.Tonemapper.Quality": 5, "r.Lumen.Reflections.DownsampleFactor": 1,
+                          "r.Lumen.ScreenProbeGather.DownsampleFactor": 8, "r.Shadow.Virtual.SMRT.RayCountLocal": 16,
+                          "r.Shadow.Virtual.SMRT.SamplesPerRayLocal": 16}},
 }
 
 
@@ -1084,3 +1092,293 @@ def score(test, ref, threshold=0.06, tol=2) -> dict:
     ssim = float((((2 * ma * mb + c1) * (2 * cov + c2)) / ((ma ** 2 + mb ** 2 + c1) * (va + vb + c2))).mean())
     return {"lit_f": round(float(f), 3), "lit_precision": round(float(tp_p), 3), "lit_recall": round(float(tp_r), 3),
             "colour_delta": round(cd, 1), "ssim": round(ssim, 3), "lit_px": [int(mt.sum()), int(mr.sum())]}
+
+
+# ---------------------------------------------------------------------- the X_ITE look, baked (any engine)
+# write_glb() keeps the shaders' data for custom materials (G2); write_glb_xite() bakes what X_ITE's shaders draw into
+# plain textures, so Blender, Babylon.js and Unreal all load the same look with no custom shader: per-facet FacetShader
+# colours (an atlas), the EyeShader's iris (a texture), the LineShader / PointShader core colours (atlases), a near-black
+# sky and faint membranes. Only TEXCOORD_0 is written, so every engine reads every attribute.
+XITE = {"facets": {"base_k": 0.5, "metal": 0.55, "rough": 0.32, "emissive_k": 0.6, "strength": 1.0},
+        "ribbons": {"strength": 3.0, "core": 0.45, "whiten": 0.35},
+        "points": {"strength": 4.0, "core": 0.3, "max_d": 0.35},
+        "eye": {"strength": 2.0},
+        "membrane": {"alpha": 0.03, "emissive_k": 0.4},
+        "sky": {"emissive": (0.012, 0.010, 0.009)}}
+
+
+def _atlas(cols, cell=4):
+    """One flat cell per item: an RGBA uint8 image and each item's UV (the cell centre; sample it NEAREST)."""
+    cols = np.clip(np.asarray(cols, float), 0, 1)
+    if cols.shape[1] == 3:
+        cols = np.concatenate([cols, np.ones((len(cols), 1))], 1)
+    n = max(1, len(cols))
+    side = int(math.ceil(math.sqrt(n)))
+    size = 1 << int(math.ceil(math.log2(max(4, side * cell))))
+    img = np.zeros((size, size, 4), np.uint8)
+    uv = np.zeros((n, 2))
+    for i, c in enumerate(cols):
+        r, q = divmod(i, side)
+        img[r * cell:(r + 1) * cell, q * cell:(q + 1) * cell] = np.round(c * 255)
+        uv[i] = ((q + 0.5) * cell / size, (r + 0.5) * cell / size)
+    return img, uv
+
+
+def _bird_centre(bake):
+    lo, hi = bounds(bake)
+    return (np.asarray(lo) + np.asarray(hi)) / 2
+
+
+def xite_facet_colours(bake, view=None):
+    """Per facet (all facet parts, in order): the FacetShader's colour at its centroid. view=None: seen head-on (V = N,
+    lights and positions in world space), one look for every camera; view=<viewpoint>: exactly as from that camera."""
+    uni = bake["uniforms"]
+    centre = _bird_centre(bake)
+    if view is not None:
+        vp = bake["viewpoints"][view] if isinstance(view, str) else view
+        Vm = camera(vp, 16, 9)[0]
+        L4 = [apply(Vm, np.asarray(uni["light%d" % k], float)) for k in range(4)]
+    else:
+        Vm = None
+        L4 = [np.asarray(uni["light%d" % k], float) for k in range(4)]
+    out = []
+    for p in bake["parts"]:
+        if p["role"] != "facets":
+            continue
+        for k in range(len(p["world"])):
+            W = p["world"][k]
+            c = W.mean(0)
+            N = np.cross(W[1] - W[0], W[2] - W[0])
+            N = N / (np.linalg.norm(N) or 1)
+            if (N @ (c - centre)) < 0:
+                N = -N
+            if Vm is None:
+                Vd, vview = N, c
+            else:
+                PV = apply(Vm, W)
+                vview = PV.mean(0)
+                Nv = np.cross(PV[1] - PV[0], PV[2] - PV[0])
+                Nv = Nv / (np.linalg.norm(Nv) or 1)
+                Vd = -vview / (np.linalg.norm(vview) or 1)
+                N = Nv if Nv @ Vd >= 0 else -Nv
+            col, a = _facet_colour(p["rgba"][k], N[None], Vd[None], vview[None], p["local"][k].mean(0)[None], L4, uni)
+            out.append(np.concatenate([col[0], [float(np.asarray(a).reshape(-1)[0])]]))
+    return np.array(out) if out else np.zeros((0, 4))
+
+
+def xite_eye_texture(bake, size=512):
+    """The EyeShader over the eye's local x, y box: (RGBA float image, (x0, y0, x1, y1))."""
+    eyes = [p for p in bake["parts"] if p["role"] == "eye"]
+    if not eyes:
+        return None, None
+    loc = np.concatenate([p["local"].reshape(-1, 3) for p in eyes])
+    x0, y0 = loc[:, 0].min(), loc[:, 1].min()
+    x1, y1 = loc[:, 0].max(), loc[:, 1].max()
+    ys, xs = np.mgrid[0:size, 0:size]
+    vP = np.stack([x0 + (xs + 0.5) / size * (x1 - x0), y1 - (ys + 0.5) / size * (y1 - y0)], -1)
+    col, a = _eye_colour(vP, bake["uniforms"], px_size=max(x1 - x0, y1 - y0) / size)
+    return np.concatenate([col, a[..., None]], -1), (x0, y0, x1, y1)
+
+
+def xite_ribbon_colours(bake, whiten=0.0):
+    """Per segment: the LineShader's core emission at the frozen moment (no pulse in flight). whiten: how far toward its
+    own peak (white-hot) the colour goes; X_ITE's additive core and halo saturate a bright line toward white."""
+    glow = bake["uniforms"]["glow"]
+    out = []
+    for p in bake["parts"]:
+        if p["role"] != "ribbons":
+            continue
+        for k in range(len(p["a"])):
+            vc = np.asarray(p["rgba"][k][:3], float)
+            loop = float(p["loop"][k])
+            em = vc * 1.1 * (1 + 0.7 * loop) + np.asarray(p["pool"][k], float) * 0.72 + np.array([1.0, 0.74, 0.38]) * p["scan"][k] * 1.3 * glow
+            out.append(em + (em.max() - em) * whiten)
+    return np.array(out) if out else np.zeros((0, 3))
+
+
+def xite_point_colours(bake):
+    """Per visible point: the PointShader's core colour times its brightness."""
+    glow = bake["uniforms"]["glow"]
+    out = []
+    for p in bake["parts"]:
+        if p["role"] != "points":
+            continue
+        for k in range(len(p["p"])):
+            if not p["visible"][k] or p["diameter"][k] <= 0:
+                continue
+            vc = np.asarray(p["colour"][k], float)
+            tw = p["twinkle"][k]
+            vB = tw * p["pool_gain"][k] * (1.0 + (glow - 1.0) * 0.5)
+            out.append((vc + (1.0 - vc) * 0.6) * 1.3 * max(vB, 0.35))
+    return np.array(out) if out else np.zeros((0, 3))
+
+
+def _png_bytes(img):
+    import io
+    from PIL import Image
+    a = np.asarray(img)
+    if a.dtype != np.uint8:
+        a = np.round(np.clip(a, 0, 1) * 255).astype(np.uint8)
+    buf = io.BytesIO()
+    Image.fromarray(a, "RGBA" if a.shape[-1] == 4 else "RGB").save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _norm_rows(v):
+    return v / np.maximum(np.linalg.norm(v, axis=-1, keepdims=True), 1e-12)
+
+
+def xite_meshes(bake, ref_dist=8.0, tube_sides=8, sphere_sub=2, sky_sub=3, look=None, view=None):
+    """(meshes, textures): meshes as write_glb's (positions, normals, indices, one UV set), textures as RGBA arrays."""
+    L = {k: dict(v, **((look or {}).get(k) or {})) for k, v in XITE.items()}
+    fcol = xite_facet_colours(bake, view)
+    rcol = xite_ribbon_colours(bake, L["ribbons"].get("whiten", 0.0))
+    pcol = xite_point_colours(bake)
+    t_fac, uv_fac = _atlas(fcol[:, :3]) if len(fcol) else (None, None)
+    t_rib, uv_rib = _atlas(rcol / max(1.0, rcol.max() if len(rcol) else 1.0)) if len(rcol) else (None, None)
+    t_pts, uv_pts = _atlas(pcol / max(1.0, pcol.max() if len(pcol) else 1.0)) if len(pcol) else (None, None)
+    t_eye, eye_box = xite_eye_texture(bake)
+    centre = _bird_centre(bake)
+    ico_v, ico_f = _icosphere(sphere_sub)
+    out = []
+    fi = ri = pi = 0
+    for p in bake["parts"]:
+        role = p["role"]
+        P, N, I, UV = [], [], [], []
+        base = 0
+        def add(pos, nrm, idx, uv):
+            nonlocal base
+            P.append(pos)
+            N.append(nrm)
+            I.append(idx + base)
+            UV.append(np.broadcast_to(np.asarray(uv, float), (len(pos), 2)))
+            base += len(pos)
+        if role == "facets":
+            W = p["world"]
+            nrm = _norm_rows(np.cross(W[:, 1] - W[:, 0], W[:, 2] - W[:, 0]))
+            flip = ((W.mean(1) - centre) * nrm).sum(-1) < 0
+            nrm[flip] *= -1
+            n = len(W)
+            add(W.reshape(-1, 3), np.repeat(nrm, 3, 0), np.arange(3 * n), np.repeat(uv_fac[fi:fi + n], 3, 0))
+            fi += n
+        elif role == "eye":
+            W, Lc = p["world"], p["local"].reshape(-1, 3)
+            nrm = _norm_rows(np.cross(W[:, 1] - W[:, 0], W[:, 2] - W[:, 0]))
+            x0, y0, x1, y1 = eye_box
+            uv = np.stack([(Lc[:, 0] - x0) / max(x1 - x0, 1e-9), (y1 - Lc[:, 1]) / max(y1 - y0, 1e-9)], -1)
+            add(W.reshape(-1, 3), np.repeat(nrm, 3, 0), np.arange(len(Lc)), uv)
+        elif role == "membrane":
+            W = p["world"]
+            nrm = _norm_rows(np.cross(W[:, 1] - W[:, 0], W[:, 2] - W[:, 0]))
+            add(W.reshape(-1, 3), np.repeat(nrm, 3, 0), np.arange(3 * len(W)), (0.5, 0.5))
+        elif role == "ribbons":
+            for k in range(len(p["a"])):
+                r = ribbon_radius(p["width_a"][k], p["bloom"][k], ref_dist) * L["ribbons"]["core"]
+                pos, nrm, idx = _ring(p["a"][k], p["b"][k], r, tube_sides)
+                add(pos, nrm, idx, uv_rib[ri])
+                ri += 1
+        elif role == "points":
+            for k in range(len(p["p"])):
+                if not p["visible"][k] or p["diameter"][k] <= 0:
+                    continue
+                d = min(p["diameter"][k] * L["points"]["core"], L["points"]["max_d"])
+                add(p["p"][k] + ico_v * (d / 2), ico_v, ico_f, uv_pts[pi])
+                pi += 1
+        elif role == "sky":
+            v, f = _icosphere(sky_sub)
+            add(p["centre"] + v * p["radius"], -v, f, (0.5, 0.5))
+        if not P:
+            continue
+        out.append({"name": p["name"], "role": role, "positions": np.concatenate(P), "normals": np.concatenate(N),
+                    "indices": np.concatenate(I).astype(np.uint32), "uvs": [np.concatenate(UV)]})
+    tex = {"facets": t_fac, "ribbons": t_rib, "points": t_pts, "eye": t_eye}
+    stats = {"facets": len(fcol), "ribbons": len(rcol), "points": len(pcol), "eye_box": eye_box,
+             "ribbon_peak": float(rcol.max()) if len(rcol) else 0.0, "point_peak": float(pcol.max()) if len(pcol) else 0.0}
+    return out, tex, L, stats
+
+
+def write_glb_xite(bake, path, ref_dist=8.0, tube_sides=8, sphere_sub=2, look=None, view=None, gain=1.0) -> dict:
+    """The Gobbler as X_ITE draws it, baked into a plain glTF any engine renders (see XITE). gain scales every emissive."""
+    parts, tex, L, stats = xite_meshes(bake, ref_dist, tube_sides, sphere_sub, look=look, view=view)
+    bin_ = bytearray()
+    views, accs, images, textures, gmeshes, nodes, mats = [], [], [], [], [], [], []
+    samplers = [{"magFilter": 9728, "minFilter": 9728, "wrapS": 33071, "wrapT": 33071},       # atlases: NEAREST
+                {"magFilter": 9729, "minFilter": 9729, "wrapS": 33071, "wrapT": 33071}]       # the eye: LINEAR
+
+    def view_of(b, target=None):
+        nonlocal bin_
+        while len(bin_) % 4:
+            bin_ += b"\0"
+        v = {"buffer": 0, "byteOffset": len(bin_), "byteLength": len(b)}
+        bin_ += b
+        if target:
+            v["target"] = target
+        views.append(v)
+        return len(views) - 1
+
+    def acc(arr, ctype, typ, minmax=False):
+        a = {"bufferView": view_of(arr.tobytes(), 34963 if ctype == 5125 else 34962), "componentType": ctype, "count": len(arr), "type": typ}
+        if minmax:
+            a["min"], a["max"] = arr.min(0).tolist(), arr.max(0).tolist()
+        accs.append(a)
+        return len(accs) - 1
+
+    tex_index = {}
+    for role, img in tex.items():
+        if img is None:
+            continue
+        images.append({"bufferView": view_of(_png_bytes(img)), "mimeType": "image/png", "name": "T_%s" % role})
+        textures.append({"source": len(images) - 1, "sampler": 1 if role == "eye" else 0, "name": "T_%s" % role})
+        tex_index[role] = len(textures) - 1
+
+    def material(role):
+        es = lambda s: {"KHR_materials_emissive_strength": {"emissiveStrength": float(s) * gain}}
+        m = {"name": "GOB_%s" % role, "doubleSided": True, "extras": {"x3dlab_role": role, "look": "xite"}}
+        if role == "facets":
+            f = L["facets"]
+            m.update(pbrMetallicRoughness={"baseColorTexture": {"index": tex_index["facets"]}, "baseColorFactor": [f["base_k"]] * 3 + [1.0],
+                                           "metallicFactor": f["metal"], "roughnessFactor": f["rough"]},
+                     emissiveTexture={"index": tex_index["facets"]}, emissiveFactor=[f["emissive_k"]] * 3, extensions=es(f["strength"]))
+        elif role in ("ribbons", "points"):
+            m.update(pbrMetallicRoughness={"baseColorFactor": [0, 0, 0, 1], "metallicFactor": 0.0, "roughnessFactor": 1.0},
+                     emissiveTexture={"index": tex_index[role]}, emissiveFactor=[1, 1, 1], extensions=es(L[role]["strength"]))
+        elif role == "eye":
+            m.update(alphaMode="BLEND", pbrMetallicRoughness={"baseColorTexture": {"index": tex_index["eye"]}, "baseColorFactor": [0, 0, 0, 1],
+                                                              "metallicFactor": 0.0, "roughnessFactor": 1.0},
+                     emissiveTexture={"index": tex_index["eye"]}, emissiveFactor=[1, 1, 1], extensions=es(L["eye"]["strength"]))
+        elif role == "membrane":
+            mp = next((p for p in bake["parts"] if p["role"] == "membrane" and p.get("rgba") is not None), None)
+            rgb = (mp["rgba"][:, :3].mean(0) if mp is not None else np.ones(3)) * L["membrane"]["emissive_k"]
+            m.update(alphaMode="BLEND", pbrMetallicRoughness={"baseColorFactor": [0, 0, 0, L["membrane"]["alpha"]], "metallicFactor": 0.0,
+                                                              "roughnessFactor": 1.0},
+                     emissiveFactor=[float(x) for x in np.clip(rgb, 0, 1)], extensions=es(1.0))
+        else:                                                                       # sky
+            m.update(pbrMetallicRoughness={"baseColorFactor": [0, 0, 0, 1], "metallicFactor": 0.0, "roughnessFactor": 1.0},
+                     emissiveFactor=list(L["sky"]["emissive"]), extensions=es(1.0))
+        return m
+
+    roles = sorted({m["role"] for m in parts})
+    mats = [material(r) for r in roles]
+    for m in parts:
+        attrs = {"POSITION": acc(m["positions"].astype(np.float32), 5126, "VEC3", True),
+                 "NORMAL": acc(m["normals"].astype(np.float32), 5126, "VEC3"),
+                 "TEXCOORD_0": acc(m["uvs"][0].astype(np.float32), 5126, "VEC2")}
+        gmeshes.append({"name": "GOB_%s_%s" % (m["role"], m["name"]),
+                        "primitives": [{"attributes": attrs, "indices": acc(m["indices"], 5125, "SCALAR"), "material": roles.index(m["role"])}]})
+        nodes.append({"name": "GOB_%s_%s" % (m["role"], m["name"]), "mesh": len(gmeshes) - 1})
+    while len(bin_) % 4:
+        bin_ += b"\0"
+    doc = {"asset": {"version": "2.0", "generator": "x3dlab gobbler baker (X_ITE look)"},
+           "extensionsUsed": ["KHR_materials_emissive_strength"], "scene": 0, "scenes": [{"nodes": list(range(len(nodes)))}],
+           "nodes": nodes, "meshes": gmeshes, "materials": mats, "textures": textures, "images": images, "samplers": samplers,
+           "accessors": accs, "bufferViews": views, "buffers": [{"byteLength": len(bin_)}],
+           "extras": {"x3dlab": {"source": bake["source"], "look": "xite", "view": view if isinstance(view, str) else None,
+                                 "gain": gain, "settings": L, "stats": {k: v for k, v in stats.items() if k != "eye_box"}}}}
+    js = json.dumps(doc, separators=(",", ":"), default=float).encode()
+    js += b" " * ((4 - len(js) % 4) % 4)
+    blob = struct.pack("<III", 0x46546C67, 2, 12 + 8 + len(js) + 8 + len(bin_)) + struct.pack("<II", len(js), 0x4E4F534A) + js \
+        + struct.pack("<II", len(bin_), 0x004E4942) + bytes(bin_)
+    Path(path).write_bytes(blob)
+    return {"path": str(path), "bytes": len(blob), "vertices": int(sum(len(m["positions"]) for m in parts)),
+            "triangles": int(sum(len(m["indices"]) // 3 for m in parts)), "textures": {r: list(t.shape[:2]) for r, t in tex.items() if t is not None},
+            **stats}

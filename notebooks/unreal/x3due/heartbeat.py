@@ -67,7 +67,7 @@ class Heartbeat:
             uptime, load = None, None
         return {
             "run_id": self.run_id, "utc": _utc(), "vm_uptime_s": uptime, "heartbeat_age_s": int(time.time() - self.t0),
-            "beat": self.beats, "job": getattr(lv, "label", None),
+            "beat": self.beats, "job": getattr(lv, "label", None) if getattr(lv, "running", True) else None,
             "job_elapsed_s": int(time.time() - lv.t0) if lv and getattr(lv, "t0", None) else None,
             "shader_jobs_done": getattr(lv, "jobs_done", None), "last_log_line": (getattr(lv, "last_line", "") or "")[:300],
             "ram_gb": [round(mem["MemTotal"] - mem["MemAvailable"], 1), round(mem["MemTotal"], 1)] if "MemAvailable" in mem else None,
