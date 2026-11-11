@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import re
 import shutil
 import signal
@@ -246,6 +247,14 @@ class GPUSampler:
         if self._t:
             self._t.join(3)
 
+    def series(self, max_points=240) -> list:
+        """[(seconds since start, VRAM GB, GPU %)], at most `max_points`, for a chart."""
+        if not self.samples:
+            return []
+        t0 = self.samples[0]["t"]
+        step = max(1, len(self.samples) // max_points)
+        return [(round(s["t"] - t0, 1), round(s["mem_mb"] / 1024, 2), s["util"]) for s in self.samples[::step]]
+
     def summary(self):
         if not self.samples:
             return {}
@@ -268,10 +277,16 @@ def _ram_used_fraction():
 
 
 def run(cmd, log_path, user=None, env_vars=None, timeout=7200, cwd=None, ram_limit=0.94, on_line=None, done_file=None,
-        done_grace=60) -> dict:
+        done_grace=60, on_tick=None, min_free_gb=2.0, disk_path=None) -> dict:
     """Start `cmd` (as `user` via runuser when root), stream its output to `log_path`, sample VRAM, kill it (and only
-    its own process group) on timeout or when RAM use passes `ram_limit`. `done_file`: once it exists, give the
-    process `done_grace` seconds to exit by itself, then stop it (Unreal sometimes lingers after a render)."""
+    its own process group) on timeout, when RAM use passes `ram_limit`, or when free disk at `disk_path` (default: the
+    log's folder) drops under `min_free_gb`. `done_file`: once it exists, give the process `done_grace` seconds to exit
+    by itself, then stop it (Unreal sometimes lingers after a render).
+
+    Output is read on a background thread and handed to the caller's thread through a queue, so `on_line(text)` runs
+    for every line and `on_tick(elapsed_s, latest_gpu_sample)` about once a second, also while Unreal prints nothing
+    (a cold shader compile can be quiet for minutes). Both run on the calling thread (IPython display works there);
+    their errors never stop the run."""
     full = list(cmd)
     if user and os.geteuid() == 0:
         envs = ["%s=%s" % kv for kv in (env_vars or {}).items()]
@@ -280,6 +295,7 @@ def run(cmd, log_path, user=None, env_vars=None, timeout=7200, cwd=None, ram_lim
     else:
         proc_env = env_vars
     Path(log_path).parent.mkdir(parents=True, exist_ok=True)
+    disk_path = disk_path or str(Path(log_path).parent)
     t0 = time.time()
     reason = None
     with open(log_path, "w", encoding="utf-8", errors="replace") as log, GPUSampler() as gs:
@@ -295,6 +311,8 @@ def run(cmd, log_path, user=None, env_vars=None, timeout=7200, cwd=None, ram_lim
                     reason = "timeout after %d s" % timeout
                 elif _ram_used_fraction() > ram_limit:
                     reason = "RAM above %d%%" % int(ram_limit * 100)
+                elif min_free_gb and _free_gb(disk_path) < min_free_gb:
+                    reason = "disk nearly full (%.1f GB free at %s)" % (_free_gb(disk_path), disk_path)
                 elif done_file and os.path.exists(done_file):
                     state["done_at"] = state["done_at"] or time.time()
                     if time.time() - state["done_at"] > done_grace:
@@ -306,17 +324,54 @@ def run(cmd, log_path, user=None, env_vars=None, timeout=7200, cwd=None, ram_lim
 
         th = threading.Thread(target=watchdog, daemon=True)
         th.start()
-        for line in proc.stdout:
-            log.write(line)
-            if on_line:
+        q = queue.Queue()
+
+        def reader():
+            for line in proc.stdout:
+                log.write(line)
+                q.put(line)
+            q.put(None)
+
+        rd = threading.Thread(target=reader, daemon=True)
+        rd.start()
+        finished = False
+        while not finished:
+            try:
+                item = q.get(timeout=1.0)
+                batch = [item]
+                while len(batch) < 2000:          # drain what is already there, then tick
+                    try:
+                        batch.append(q.get_nowait())
+                    except queue.Empty:
+                        break
+            except queue.Empty:
+                batch = []
+            for item in batch:
+                if item is None:
+                    finished = True
+                    break
+                if on_line:
+                    try:
+                        on_line(item.rstrip("\n"))
+                    except Exception:
+                        pass
+            if on_tick:
                 try:
-                    on_line(line.rstrip("\n"))
+                    on_tick(time.time() - t0, gs.samples[-1] if gs.samples else None)
                 except Exception:
                     pass
         proc.wait()
+        rd.join(2)
         th.join(2)
     return {"rc": proc.returncode, "seconds": round(time.time() - t0, 1), "killed": reason, "gpu": gs.summary(),
-            "log": str(log_path), "cmd": cmd}
+            "gpu_series": gs.series(), "log": str(log_path), "cmd": cmd}
+
+
+def _free_gb(path) -> float:
+    try:
+        return shutil.disk_usage(path).free / 2**30
+    except OSError:
+        return float("inf")
 
 
 def _stop_group(proc):
