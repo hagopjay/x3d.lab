@@ -268,6 +268,29 @@ class Browser:
                  data={"ok": r.ok, "t": r.t, "heap": r.heap, "errors": r.errors[:3], "warnings": len(r.warnings)})
         return r
 
+    async def aexport_url(self, url: str, timeout: float = 90) -> dict:
+        """X_ITE opens a file it can read (X3D, VRML, glTF/GLB, OBJ, STL, PLY, SVG) and writes it back as X3D XML: X_ITE's
+        own conversion. `url` is relative to `assets`. Returns {ok, xml, errors, warnings, ms}."""
+        async with self._lock:
+            page = await self._page(self.viewport)
+            mark = len(self._console)
+            t0 = time.perf_counter()
+            try:
+                d = await asyncio.wait_for(page.evaluate("""async (u) => {
+                    const b = await window.lab.ready;
+                    const s = await b.createX3DFromURL(new X3D.MFString(u));
+                    return {ok: true, xml: s.toXMLString(), version: s.specificationVersion, encoding: s.encoding};
+                }""", url), timeout)
+            except asyncio.TimeoutError:
+                d = {"ok": False, "errors": ["timeout after %.0f s" % timeout]}
+            except Exception as exc:
+                d = {"ok": False, "errors": [str(exc)[:400]]}
+            logs = self._console[mark:]
+        errors = list(d.get("errors") or []) + [t for _, k, t in logs if k == "error" and not _benign(t)]
+        return {"ok": bool(d.get("ok")) and not any(e.startswith("pageerror") for e in errors), "xml": d.get("xml") or "",
+                "errors": errors[:6], "warnings": [t for _, k, t in logs if k in ("warning", "warn") and not _benign(t)][:6],
+                "source_encoding": d.get("encoding"), "ms": round((time.perf_counter() - t0) * 1000, 1)}
+
     async def acopilot(self, xml: str, timeout: float = 60) -> dict | None:
         """The Copilot validator's verdict, normalised to {ok, errors, raw}; None when no Copilot build is loaded."""
         if not self.copilot_dir:

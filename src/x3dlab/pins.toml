@@ -23,6 +23,12 @@ ref = "d55fd0e38ee6a917233ed384bb8a2b884743aadb"     # main on 10 Nov 2026 (brid
 babylon = "9.32.0"                                   # the version the loom receipts were taken with
 node = "22.11.0"                                     # downloaded when the system Node is older than 20
 
+[gltf_samples]
+# Khronos glTF Sample Assets: the glTF side of the interchange run (and the Unreal control). Sparse, blob-less fetch
+# of only the models x3dlab.formats.SAMPLES names (about 14 MB).
+repo = "KhronosGroup/glTF-Sample-Assets"
+ref = "8f492390ddc7a2ae221a1369ef560589cf8c70fb"     # main on 10 Nov 2026
+
 [x_ite]
 # The browser the dashboard loads. One version everywhere, recorded per run.
 version = "16.7.0"
@@ -35,3 +41,4 @@ url = "https://github.com/cloudflare/cloudflared/releases/download/{version}/clo
 [python]
 mcp = "mcp>=1.29,<2"
 bpy = "bpy==5.2.3"
+usd_core = "usd-core==25.11"                         # Pixar's USD for Python (cp312 and cp313 wheels): validates the USD trip

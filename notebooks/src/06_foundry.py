@@ -25,7 +25,9 @@
 
 # %%
 #@title 1 · Start x3d_mcp and the dashboard { display-mode: "form" }
-LOG_LEVEL = "WARN"  #@param ["DEBUG", "INFO", "WARN", "ERROR"]
+VERBOSE = True  #@param {type:"boolean"}
+VISUAL = True  #@param {type:"boolean"}
+LOG_LEVEL = "INFO" if VERBOSE else "WARN"   # VERBOSE streams every stage as it runs; off: warnings only
 LAB_REPO = "hagopjay/x3d.lab"
 LAB_REF = "main"
 
@@ -145,7 +147,10 @@ if st["rules"]:
 ROUNDS = 1  #@param {type:"slider", min:1, max:5, step:1}
 for i in range(ROUNDS):
     rnd = foundry.run(lab, cfg)
-    foundry.show(rnd, lab)
+    if VISUAL:
+        foundry.show(rnd, lab)
+    else:
+        print(foundry.card(rnd))
 
 # %% [markdown]
 # **Reading a round.**
@@ -175,20 +180,56 @@ for a in rnd.artifacts:
 print("kit zip:", rnd.dir / rnd.env["kit"] if rnd.env.get("kit") else "nothing written this round")
 
 # %% [markdown]
-# ## 7 · Keep everything
+# ## 7 · The other direction: glTF → X3D, and the reference stills
 #
-# Zips the last round's folder (report, card, scenes, pictures, kit) and the state file, then stops the lab. To chain rounds across Colab sessions, keep `state.json` (or set `STATE` in step 4 to a path on Google Drive).
+# The rounds above go **X3D → everything else**. This section goes back: Khronos's own **glTF sample models** (32 small ones, each built to test one glTF feature: strips and fans, alpha modes, unlit materials, texture transforms, cameras, lights, instancing, skins…) go into X3D **two independent ways**:
+#
+# | Converter | How |
+# |---|---|
+# | **X_ITE** | opens the glTF itself and writes it back as X3D (`createX3DFromURL` + `toXMLString`) |
+# | **Blender + x3d-blender-io** | Blender's glTF importer, then the add-on's X3D 4.0 exporter; the same Blender scene also goes out as **USD**, checked by Pixar's compliance checker |
+#
+# Both X3D files are judged (x3d_mcp, lxml + XSD, the object model), and X_ITE draws them **under the same camera as the original glTF**. That gives **two converters and three pictures**:
+# - X_ITE's X3D matches and Blender's doesn't: the loss is in Blender's leg.
+# - Neither matches: X3D (or X_ITE) can't hold that feature yet.
+#
+# The **gap map** lists the node types each converter used: what X3D 4 can already express, and which tool is leaving it out.
+#
+# The same run takes the **reference stills**: 1280×720, on the magenta key and on grey, with a manifest per model (camera, bounds, X_ITE version, sample commit). The Unreal notebook compares against these instead of rendering its own (coordination doc, item 4). CPU is enough; about 5–10 minutes for all 32.
 
 # %%
-#@title 7 · Zip and stop { display-mode: "form" }
+#@title 7 · Run the interchange { display-mode: "form" }
+SAMPLES = ""  #@param {type:"string"}
+BLENDER_TOO = True  #@param {type:"boolean"}
+USD_TOO = True  #@param {type:"boolean"}
+from x3dlab import interchange
+ix = interchange.run(lab, samples=[s.strip() for s in SAMPLES.split(",") if s.strip()], blender=BLENDER_TOO and lab.blender is not None,
+                     usd=USD_TOO, chrome_gpu=CHROME_GPU)
+if VISUAL:
+    interchange.show(ix, lab)                      # pictures side by side, the gap map, the claims
+else:
+    print(interchange.card(ix))
+print("stills for other engines:", ix.dir / "stills" / "index.json")
+
+# %% [markdown]
+# ## 8 · Keep everything
+#
+# Zips the last round's folder (report, card, scenes, pictures, kit) with the state file, and the interchange folder (stills, manifests, converted files) if step 7 ran; then stops the lab. To chain rounds across Colab sessions, keep `state.json` (or set `STATE` in step 4 to a path on Google Drive).
+
+# %%
+#@title 8 · Zip and stop { display-mode: "form" }
 import shutil
-sp = foundry.state_path(cfg)
-shutil.copy(sp, rnd.dir / "state.json")
-z = shutil.make_archive(str(rnd.dir), "zip", rnd.dir)
-print("zip:", z, "(%.1f MB)" % (os.path.getsize(z) / 1e6))
-try:
-    from google.colab import files
-    files.download(z)
-except Exception:
-    pass
+zips = []
+if "rnd" in globals():
+    shutil.copy(foundry.state_path(cfg), rnd.dir / "state.json")
+    zips.append(shutil.make_archive(str(rnd.dir), "zip", rnd.dir))
+if "ix" in globals():
+    zips.append(shutil.make_archive(str(ix.dir), "zip", ix.dir))
+for z in zips:
+    print("zip:", z, "(%.1f MB)" % (os.path.getsize(z) / 1e6))
+    try:
+        from google.colab import files
+        files.download(z)
+    except Exception:
+        pass
 lab.down()
