@@ -39,8 +39,8 @@
 # %%
 #@title 1 · Choose your options { display-mode: "form" }
 SERVER = "hagopjay"  #@param ["hagopjay", "consortium"]
-TUNNEL = "none"  #@param ["none", "cloudflared", "ngrok"]
-#@markdown **none** = only this notebook can use the server (safest) · **cloudflared** = public address, no account · **ngrok** = public address, needs the `NGROK_AUTHTOKEN` secret
+TUNNEL = "none"  #@param ["none", "cloudflared", "cloudflared-account", "ngrok"]
+#@markdown **none** = only this notebook can use the server (safest) · **cloudflared** = public address, no account · **cloudflared-account** = your own fixed hostname, needs the `CLOUDFLARE_TUNNEL_TOKEN` secret and `CF_HOSTNAME` (1b) · **ngrok** = public address, needs the `NGROK_AUTHTOKEN` secret
 print("✅ Options saved: server = %s, tunnel = %s. Next: run 1b (the defaults are fine), then Install." % (SERVER, TUNNEL))
 
 # %% [markdown]
@@ -60,6 +60,7 @@ print("✅ Options saved: server = %s, tunnel = %s. Next: run 1b (the defaults a
 # | `LOAD_CALLS_PER_SESSION` | 10 | validations per session in 5d | Total calls = sessions × calls. 16 × 10 = 160 calls, about 5–15 s. |
 # | `KEEP_TOKEN` | off | reuse the password saved as Colab secret `X3D_MCP_TOKEN` instead of a new random one | With a fixed `NGROK_DOMAIN` too, the connect command you gave Claude Code keeps working after a restart. Make a token with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. Anyone with address + token can use your server: keep it secret. |
 # | `NGROK_DOMAIN` | empty | a fixed ngrok address such as `my-name.ngrok-free.app` | Every free ngrok account gets one static domain: claim it at [dashboard.ngrok.com/domains](https://dashboard.ngrok.com/domains). Empty = a random address each time. |
+# | `CF_HOSTNAME` | empty | the public hostname of your own Cloudflare tunnel, such as `mcp.example.com` | Only for `TUNNEL = cloudflared-account`. Set it up once in the Cloudflare dashboard (see section 4). |
 # | `SHOW_3D` | on | shows scenes live in the notebook (drag to turn, scroll to zoom) with the X_ITE browser | X_ITE loads from the jsdelivr CDN into *your* browser, not into Colab. Turn it off on slow connections or if your browser blocks it; the tests don't need it. |
 # | `VERBOSE` | off | prints every proxied request, package versions, the server's status JSON and every test line | Turn on when something fails. |
 # | `MCP_PORT` / `PROXY_PORT` | 8000 / 8765 | where the server and the password-checking proxy listen, on this machine only | Change only if something else already uses the port. Nothing outside Colab can reach these ports directly. |
@@ -75,6 +76,7 @@ LOAD_SESSIONS = 16  #@param {type:"slider", min:1, max:64, step:1}
 LOAD_CALLS_PER_SESSION = 10  #@param {type:"slider", min:1, max:50, step:1}
 KEEP_TOKEN = False  #@param {type:"boolean"}
 NGROK_DOMAIN = ""  #@param {type:"string"}
+CF_HOSTNAME = ""  #@param {type:"string"}
 SHOW_3D = True  #@param {type:"boolean"}
 VERBOSE = False  #@param {type:"boolean"}
 MCP_PORT = 8000  #@param {type:"integer"}
@@ -267,6 +269,7 @@ if VERBOSE:
 # |---|---|---|---|---|
 # | `none` | code in this notebook | `http://127.0.0.1:8765/mcp` | nothing | Safest. Colab's own "open port" links need your Google login, which MCP apps do not have, so they can't be used here. |
 # | `cloudflared` | any MCP app, anywhere | random `https://….trycloudflare.com/mcp`, new each time | nothing | Cloudflare's free *quick tunnel*: no account, no uptime promise, about 100 s per request at most (plenty for these tools). Starting many in a row can be refused for a minute (429). |
+# | `cloudflared-account` | any MCP app, anywhere | your own `https://CF_HOSTNAME/mcp`, the same every run | Colab secret `CLOUDFLARE_TUNNEL_TOKEN`, and `CF_HOSTNAME` | A *named tunnel* in your Cloudflare account. Once, in the dashboard: *Zero Trust › Networks › Tunnels › Create a tunnel › Cloudflared*, copy the long string after `--token` into the secret; then under *Public Hostname* add your hostname with service **`http://localhost:8765`** (this gatekeeper). With `KEEP_TOKEN` too, your app setup never changes. |
 # | `ngrok` | any MCP app, anywhere | random, or your fixed `NGROK_DOMAIN` | Colab secret `NGROK_AUTHTOKEN` | Use your **authtoken** ([dashboard › Your Authtoken](https://dashboard.ngrok.com/get-started/your-authtoken)), **not** an API key: API keys are for ngrok's REST API and are refused here (`ERR_NGROK_105`). The free plan runs one ngrok agent at a time across all your machines (`ERR_NGROK_108`). |
 #
 # After the tunnel is up, this cell checks the protection from the outside: no password → refused (401), right password → accepted. With a tunnel it then shows copy-paste setup for Claude Code, Claude Desktop, Cursor and the MCP Inspector, with the password blurred until you click it.
@@ -354,8 +357,7 @@ def stop_tunnels():
         from pyngrok import ngrok
         ngrok.kill()
 
-def start_cloudflared():
-    global tunnel
+def cloudflared_exe():
     exe = shutil.which("cloudflared") or os.path.join(WORK, "cloudflared")
     if not os.path.exists(exe):
         if not sys.platform.startswith("linux"):
@@ -365,6 +367,38 @@ def start_cloudflared():
         urllib.request.urlretrieve("https://github.com/cloudflare/cloudflared/releases/download/"
                                    "%s/cloudflared-linux-%s" % (CLOUDFLARED_VERSION, arch), exe)
         os.chmod(exe, os.stat(exe).st_mode | stat.S_IEXEC)
+    return exe
+
+def start_cloudflared_account():
+    """Your named tunnel. The hostname -> http://localhost:8765 route lives in the Cloudflare dashboard, not here."""
+    global tunnel
+    host = CF_HOSTNAME.strip().removeprefix("https://").removeprefix("http://").strip("/")
+    if not host:
+        raise RuntimeError("Set CF_HOSTNAME (cell 1b) to your tunnel's public hostname, for example mcp.example.com.")
+    token = secret("CLOUDFLARE_TUNNEL_TOKEN")
+    if not token:
+        import getpass   # a hidden prompt; nothing is saved into the notebook
+        token = getpass.getpass("CLOUDFLARE_TUNNEL_TOKEN (not in Colab secrets; paste it, it is not saved): ").strip()
+    if not token:
+        raise RuntimeError("Add the Colab secret CLOUDFLARE_TUNNEL_TOKEN (🔑, switch on Notebook access), or choose TUNNEL = cloudflared.")
+    log = os.path.join(WORK, "cloudflared.log")
+    # The token goes in through the environment (cloudflared reads TUNNEL_TOKEN), so `ps` never shows it.
+    tunnel = subprocess.Popen([cloudflared_exe(), "tunnel", "--no-autoupdate", "run"], env={**os.environ, "TUNNEL_TOKEN": token},
+                              stdout=open(log, "w"), stderr=subprocess.STDOUT, start_new_session=True)
+    del token
+    for _ in range(90):
+        text = open(log, errors="replace").read()
+        if "Registered tunnel connection" in text:
+            return "https://" + host
+        if tunnel.poll() is not None or re.search(r"(?i)unauthorized|invalid tunnel|token is not valid", text):
+            break
+        time.sleep(0.5)
+    raise RuntimeError("cloudflared did not connect your tunnel. A wrong or revoked CLOUDFLARE_TUNNEL_TOKEN is the usual cause. "
+                       "Its log:\n" + open(log, errors="replace").read()[-1500:])
+
+def start_cloudflared():
+    global tunnel
+    exe = cloudflared_exe()
     log = os.path.join(WORK, "cloudflared.log")   # a file, not a pipe: an unread pipe fills up and stalls the tunnel
     tunnel = subprocess.Popen([exe, "tunnel", "--no-autoupdate", "--url", "http://127.0.0.1:%d" % PROXY_PORT],
                               stdout=open(log, "w"), stderr=subprocess.STDOUT, start_new_session=True)
@@ -391,6 +425,25 @@ NGROK_HINTS = {
                      "Stop that one (https://dashboard.ngrok.com/agents), or use TUNNEL = cloudflared.",
 }
 
+def ngrok_connect(port, domain=""):
+    """Open an ngrok http tunnel, on a fixed domain if one is given, under any pyngrok.
+    pyngrok 9 talks to ngrok's /api/endpoints, which wants url="https://<domain>"; older pyngrok uses /api/tunnels,
+    which wants domain="<domain>". Each refuses the other's field ("field domain not found in type config.Endpoint"),
+    so send the one this pyngrok expects and fall back to the other once."""
+    from pyngrok import conf, ngrok
+    d = (domain or "").strip().removeprefix("https://").removeprefix("http://").strip("/")
+    if not d:
+        return ngrok.connect(port, "http")
+    tries = [{"url": "https://" + d}, {"domain": d}]
+    if getattr(conf.get_default(), "config_version", None) != "3":
+        tries.reverse()
+    for i, kw in enumerate(tries):
+        try:
+            return ngrok.connect(port, "http", **kw)
+        except Exception as e:
+            if i or not re.search(r"field (url|domain) not found", str(e)):
+                raise
+
 def start_ngrok():
     from pyngrok import conf, ngrok
     token = secret("NGROK_AUTHTOKEN") or secret("NGROK")
@@ -400,7 +453,7 @@ def start_ngrok():
     conf.get_default().auth_token = token
     ngrok.kill()
     try:
-        t = ngrok.connect(PROXY_PORT, "http", **({"domain": NGROK_DOMAIN} if NGROK_DOMAIN else {}))
+        t = ngrok_connect(PROXY_PORT, NGROK_DOMAIN)
     except Exception as e:
         text = "%s %s" % (e, " ".join(getattr(e, "ngrok_logs", None) or []))
         code = re.search(r"ERR_NGROK_\d+", text)
@@ -448,7 +501,7 @@ stop_tunnels()
 PUBLIC_URL = None
 if TUNNEL != "none":
     print("Opening the %s tunnel..." % TUNNEL, end=" ")
-    PUBLIC_URL = {"cloudflared": start_cloudflared, "ngrok": start_ngrok}[TUNNEL]()
+    PUBLIC_URL = {"cloudflared": start_cloudflared, "cloudflared-account": start_cloudflared_account, "ngrok": start_ngrok}[TUNNEL]()
     print("✅", PUBLIC_URL)
 ENDPOINT = (PUBLIC_URL or "http://127.0.0.1:%d" % PROXY_PORT) + "/mcp"
 
@@ -476,6 +529,9 @@ with httpx.Client(timeout=30, headers={"ngrok-skip-browser-warning": "1"}) as h:
         if r.headers.get("mcp-session-id"):  # tidy up the test session
             h.delete(ENDPOINT, headers={**ok_hdr, "mcp-session-id": r.headers["mcp-session-id"]})
 failed = [k for k, ok in checks.items() if not ok]
+if TUNNEL == "cloudflared-account" and not reached:
+    print("👉 Your tunnel is connected but %s does not reach this gatekeeper. In the Cloudflare dashboard the public "
+          "hostname's service must be http://localhost:%d, and the hostname must match CF_HOSTNAME." % (base, PROXY_PORT))
 for k, ok in checks.items():
     print("  %s %s" % ("✅" if ok else "❌", k))
 if failed:

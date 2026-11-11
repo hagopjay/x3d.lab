@@ -16,7 +16,7 @@
 # %%
 #@title 1 · Settings { display-mode: "form" }
 SERVER = "hagopjay"  #@param ["hagopjay", "consortium"]
-TUNNEL = "none"  #@param ["none", "cloudflared", "ngrok"]
+TUNNEL = "none"  #@param ["none", "cloudflared", "cloudflared-account", "ngrok"]
 PIN_MCP_BELOW_2 = True  #@param {type:"boolean"}
 RUN_SLOW_TOOLS = False  #@param {type:"boolean"}
 LOCAL_XITE = False  #@param {type:"boolean"}
@@ -24,6 +24,8 @@ LOAD_SESSIONS = 16  #@param {type:"slider", min:1, max:64, step:1}
 LOAD_CALLS_PER_SESSION = 10  #@param {type:"slider", min:1, max:50, step:1}
 VERBOSE = False  #@param {type:"boolean"}
 NGROK_DOMAIN = ""  #@param {type:"string"}
+CF_HOSTNAME = ""  #@param {type:"string"}
+KEEP_TOKEN = False  #@param {type:"boolean"}
 
 # The one place the two servers differ. Change `ref` to test another commit, branch or tag.
 SERVERS = {
@@ -175,13 +177,20 @@ print("server pid %d is up in %.1f s: %s" % (server.pid, time.time() - t0, pulse
 # %% [markdown]
 # ## 4 · Expose it
 #
-# A small proxy on port 8765 sits in front of the server. It forwards everything to `127.0.0.1:8000` but only with `Authorization: Bearer <token>`; the token is new every run. The tunnel points at the proxy, never at the server.
+# A small proxy on port 8765 sits in front of the server. It forwards everything to `127.0.0.1:8000` but only with `Authorization: Bearer <token>`. The token is new every run unless `KEEP_TOKEN` is on. The tunnel points at the proxy, never at the server.
 #
 # | `TUNNEL` | Reachable by | Needs |
 # |---|---|---|
 # | `none` | code in this notebook only. Colab's own port proxy needs your Google login cookie, which MCP clients don't have | nothing |
-# | `cloudflared` | any MCP client, anywhere | nothing: a random `trycloudflare.com` URL |
+# | `cloudflared` | any MCP client, anywhere | nothing: a random `trycloudflare.com` URL, new every run |
+# | `cloudflared-account` | any MCP client, on your own hostname | a named tunnel in your Cloudflare account: `CLOUDFLARE_TUNNEL_TOKEN` in Colab Secrets, its hostname in `CF_HOSTNAME` |
 # | `ngrok` | any MCP client, optionally on a fixed domain | a free `NGROK_AUTHTOKEN` in Colab Secrets (key icon) |
+#
+# **Secrets.** Every token is read from the environment, then Colab Secrets (key icon; switch on *Notebook access*), then a hidden prompt. None is ever written into a cell, so none ends up in the copy of this notebook that Colab saves to GitHub.
+#
+# **Your Cloudflare tunnel, once.** In the Cloudflare dashboard, open *Zero Trust › Networks › Tunnels*, create a tunnel (type *Cloudflared*) and copy the token from the install command: the long string after `--token`. Under *Public Hostname*, add a hostname on one of your domains (for example `mcp.example.com`) with service **`http://localhost:8765`**: that is this notebook's proxy. Then put the token in Colab Secrets as `CLOUDFLARE_TUNNEL_TOKEN` and the hostname in `CF_HOSTNAME`.
+#
+# **A token that survives restarts.** With a fixed hostname (or an ngrok domain), set `KEEP_TOKEN` and add `X3D_MCP_TOKEN` to Colab Secrets: at least 24 random characters, for example from `python -c "import secrets; print(secrets.token_urlsafe(32))"`. Your client configs then keep working across runs. Rotate it by changing the secret.
 
 # %%
 #@title 4 · Start the proxy and the tunnel { display-mode: "form" }
@@ -192,7 +201,29 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 
-MCP_TOKEN = secrets.token_urlsafe(32)
+def read_secret(name, prompt=True):
+    """The environment, then Colab Secrets, then (in Colab only) a hidden prompt. Never printed, never written to a cell."""
+    value = os.environ.get(name)
+    if not value:
+        try:
+            from google.colab import userdata
+        except ImportError:
+            return None                                # not Colab: no prompt, so headless runs never hang
+        try:
+            value = userdata.get(name)
+        except Exception:                              # missing, or Notebook access is off
+            value = None
+        if not value and prompt:
+            import getpass
+            value = getpass.getpass("%s (not in Colab Secrets; paste it here, it is not saved): " % name)
+    return (value or "").strip() or None
+
+if KEEP_TOKEN:
+    MCP_TOKEN = read_secret("X3D_MCP_TOKEN", prompt=False)
+    if not MCP_TOKEN or len(MCP_TOKEN) < 24:
+        raise RuntimeError("KEEP_TOKEN is on: add X3D_MCP_TOKEN (24+ random characters) in Colab Secrets, or switch KEEP_TOKEN off")
+else:
+    MCP_TOKEN = secrets.token_urlsafe(32)
 HOP = {"host", "content-length", "connection", "keep-alive", "transfer-encoding", "te", "trailer", "upgrade",
        "authorization", "cookie", "origin", "referer", "accept-encoding"}
 upstream = httpx.AsyncClient(base_url="http://127.0.0.1:%d" % MCP_PORT, timeout=httpx.Timeout(10, read=600))
@@ -228,8 +259,27 @@ threading.Thread(target=proxy_server.run, daemon=True).start()
 while not proxy_server.started:
     time.sleep(0.05)
 
+def ngrok_connect(port, domain=""):
+    """Open an ngrok http tunnel, on a fixed domain if one is given, under any pyngrok.
+    pyngrok 9 talks to ngrok's /api/endpoints, which wants url="https://<domain>"; older pyngrok uses /api/tunnels,
+    which wants domain="<domain>". Each refuses the other's field ("field domain not found in type config.Endpoint"),
+    so send the one this pyngrok expects and fall back to the other once."""
+    from pyngrok import conf, ngrok
+    d = (domain or "").strip().removeprefix("https://").removeprefix("http://").strip("/")
+    if not d:
+        return ngrok.connect(port, "http")
+    tries = [{"url": "https://" + d}, {"domain": d}]
+    if getattr(conf.get_default(), "config_version", None) != "3":
+        tries.reverse()
+    for i, kw in enumerate(tries):
+        try:
+            return ngrok.connect(port, "http", **kw)
+        except Exception as e:
+            if i or not re.search(r"field (url|domain) not found", str(e)):
+                raise
+
 PUBLIC_URL = None
-if TUNNEL == "cloudflared":
+if TUNNEL.startswith("cloudflared"):
     exe = os.path.join(WORK, "cloudflared")
     if not os.path.exists(exe):
         urllib.request.urlretrieve("https://github.com/cloudflare/cloudflared/releases/download/%s/cloudflared-linux-amd64"
@@ -239,6 +289,31 @@ if TUNNEL == "cloudflared":
         if p.info["name"] == "cloudflared":
             p.terminate()
     cf_log = os.path.join(WORK, "cloudflared.log")     # a log file, not a pipe: an unread pipe can stall the tunnel
+
+if TUNNEL == "cloudflared-account":
+    host = CF_HOSTNAME.strip().removeprefix("https://").removeprefix("http://").strip("/")
+    if not host:
+        raise RuntimeError("set CF_HOSTNAME to the public hostname of your tunnel (for example mcp.example.com)")
+    cf_token = read_secret("CLOUDFLARE_TUNNEL_TOKEN")
+    if not cf_token:
+        raise RuntimeError("add CLOUDFLARE_TUNNEL_TOKEN in Colab Secrets (see the text above this cell), or use TUNNEL='cloudflared'")
+    # The token goes in through the environment (cloudflared reads TUNNEL_TOKEN), so it is not on the command line where
+    # `ps` would show it. The hostname -> http://localhost:8765 route lives in your Cloudflare dashboard, not here.
+    tunnel = subprocess.Popen([exe, "tunnel", "--no-autoupdate", "run"], env={**os.environ, "TUNNEL_TOKEN": cf_token},
+                              stdout=open(cf_log, "w"), stderr=subprocess.STDOUT, start_new_session=True)
+    del cf_token
+    for _ in range(90):
+        text = open(cf_log).read()
+        if "Registered tunnel connection" in text:
+            break
+        if tunnel.poll() is not None or re.search(r"(?i)unauthorized|invalid tunnel|token is not valid", text):
+            raise RuntimeError("cloudflared stopped. A wrong or revoked CLOUDFLARE_TUNNEL_TOKEN is the usual cause; its log:\n"
+                               + text[-1500:])
+        time.sleep(0.5)
+    else:
+        raise RuntimeError("cloudflared registered no connection in 45 s:\n" + open(cf_log).read()[-1500:])
+    PUBLIC_URL = "https://" + host
+elif TUNNEL == "cloudflared":
     tunnel = subprocess.Popen([exe, "tunnel", "--no-autoupdate", "--url", "http://127.0.0.1:%d" % PROXY_PORT],
                               stdout=open(cf_log, "w"), stderr=subprocess.STDOUT, start_new_session=True)
     for _ in range(90):
@@ -251,24 +326,29 @@ if TUNNEL == "cloudflared":
     time.sleep(3)                                      # a fresh quick tunnel needs a moment
 elif TUNNEL == "ngrok":
     from pyngrok import conf, ngrok
-    token = os.environ.get("NGROK_AUTHTOKEN")
-    if not token:
-        try:
-            from google.colab import userdata
-            token = userdata.get("NGROK_AUTHTOKEN")
-        except Exception:
-            pass
+    token = read_secret("NGROK_AUTHTOKEN")
     if not token:
         raise RuntimeError("add NGROK_AUTHTOKEN in Colab Secrets (free at ngrok.com), or use TUNNEL='cloudflared'")
     conf.get_default().auth_token = token
     ngrok.kill()
-    PUBLIC_URL = ngrok.connect(PROXY_PORT, "http", **({"domain": NGROK_DOMAIN} if NGROK_DOMAIN else {})).public_url.replace("http://", "https://")
+    PUBLIC_URL = ngrok_connect(PROXY_PORT, NGROK_DOMAIN).public_url.replace("http://", "https://")
 
 ENDPOINT = (PUBLIC_URL or "http://127.0.0.1:%d" % PROXY_PORT) + "/mcp"
 
 # A quick check through the endpoint, the way a remote client arrives
 with httpx.Client(timeout=30) as h:
     base = ENDPOINT[:-4]
+    for _ in range(20):                                # an edge can need a few seconds before it routes a new tunnel
+        try:
+            health = h.get(base + "/healthz").status_code
+        except httpx.HTTPError:
+            health = None
+        if health == 200 or not PUBLIC_URL:
+            break
+        time.sleep(1.5)
+    if TUNNEL == "cloudflared-account" and health != 200:
+        print("hint: %s answered %s. In the Cloudflare dashboard, the public hostname's service must be http://localhost:%d "
+              "and the hostname must match CF_HOSTNAME." % (base, health, PROXY_PORT))
     checks = {"proxy answers": h.get(base + "/healthz").status_code == 200,
               "no token -> 401": h.post(ENDPOINT, json={}).status_code == 401,
               "token -> MCP handshake": h.post(ENDPOINT, headers={"authorization": "Bearer " + MCP_TOKEN,

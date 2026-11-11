@@ -76,6 +76,26 @@ def ngrok_token() -> str | None:
     return None
 
 
+def ngrok_connect(port, domain=""):
+    """Open an ngrok http tunnel, on a fixed domain if one is given, under any pyngrok.
+    pyngrok 9 talks to ngrok's /api/endpoints, which wants url="https://<domain>"; older pyngrok uses /api/tunnels,
+    which wants domain="<domain>". Each refuses the other's field ("field domain not found in type config.Endpoint"),
+    so send the one this pyngrok expects and fall back to the other once."""
+    from pyngrok import conf, ngrok
+    d = (domain or "").strip().removeprefix("https://").removeprefix("http://").strip("/")
+    if not d:
+        return ngrok.connect(port, "http")
+    tries = [{"url": "https://" + d}, {"domain": d}]
+    if getattr(conf.get_default(), "config_version", None) != "3":
+        tries.reverse()
+    for i, kw in enumerate(tries):
+        try:
+            return ngrok.connect(port, "http", **kw)
+        except Exception as e:
+            if i or not re.search(r"field (url|domain) not found", str(e)):
+                raise
+
+
 def ngrok(port: int, domain: str | None = None) -> str:
     try:
         from pyngrok import conf, ngrok as _ngrok
@@ -94,8 +114,7 @@ def ngrok(port: int, domain: str | None = None) -> str:
             _ngrok.disconnect(t.public_url)
         except Exception:
             pass
-    kw = {"domain": domain} if domain else {}
-    t = _ngrok.connect(port, "http", **kw)
+    t = ngrok_connect(port, domain)
     url = t.public_url.replace("http://", "https://")
     procs.register_inprocess(-port, lambda: _ngrok.disconnect(t.public_url))
     bus.info("ngrok tunnel up: %s" % url, src="tunnel")

@@ -5,6 +5,8 @@
     python tools/run_basic.py --server consortium     # upstream Web3DConsortium/x3d_mcp
     python tools/run_basic.py --tunnel cloudflared    # also try a trycloudflare tunnel (needs outbound network)
     python tools/run_basic.py --tunnel ngrok          # needs NGROK_AUTHTOKEN; skipped cleanly without it
+    python tools/run_basic.py --tunnel cloudflared-account --cf-hostname mcp.example.com
+                                                      # a named tunnel; needs CLOUDFLARE_TUNNEL_TOKEN; skipped cleanly without it
 
 Exit code 0 when the notebook ran to the end with 0 FAIL rows; 1 otherwise; 2 on usage errors.
 The tunnel step is skipped (exit 0, "tunnel: SKIPPED") when the token or the network is missing, so CI stays green offline.
@@ -38,7 +40,7 @@ def patch(source: str, args, work: str) -> str:
     """Set the settings cell (cell 1) the way a Colab user would with the form fields."""
     for name, value in (("SERVER", repr(args.server)), ("TUNNEL", repr(args.tunnel)), ("RUN_SLOW_TOOLS", repr(args.slow)),
                         ("LOCAL_XITE", repr(args.local_xite)), ("LOAD_SESSIONS", str(args.sessions)),
-                        ("LOAD_CALLS_PER_SESSION", str(args.calls))):
+                        ("LOAD_CALLS_PER_SESSION", str(args.calls)), ("CF_HOSTNAME", repr(args.cf_hostname))):
         source, n = re.subn(r"^%s = .*?(\s+#@param.*)$" % name, lambda m: "%s = %s%s" % (name, value, m.group(1)), source, count=1, flags=re.M)
         if n != 1:
             raise SystemExit("settings cell: could not find %s" % name)
@@ -52,7 +54,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--notebook", default=str(NOTEBOOK))
     ap.add_argument("--server", default="hagopjay", choices=["hagopjay", "consortium"])
-    ap.add_argument("--tunnel", default="none", choices=["none", "cloudflared", "ngrok"])
+    ap.add_argument("--tunnel", default="none", choices=["none", "cloudflared", "cloudflared-account", "ngrok"])
+    ap.add_argument("--cf-hostname", default="", help="the public hostname of your named Cloudflare tunnel (with --tunnel cloudflared-account)")
     ap.add_argument("--installer", default="auto", choices=["auto", "uv", "pip"], help="pip: remove uv from PATH inside the kernel")
     ap.add_argument("--slow", action="store_true", help="RUN_SLOW_TOOLS: also call render_image/render_current_scene (needs Chromium)")
     ap.add_argument("--local-xite", action="store_true")
@@ -77,7 +80,10 @@ def main() -> int:
     if args.tunnel == "ngrok" and not os.environ.get("NGROK_AUTHTOKEN"):
         print("tunnel: SKIPPED (NGROK_AUTHTOKEN is not set); running with TUNNEL='none'")
         args.tunnel = "none"
-    elif args.tunnel == "cloudflared" and not have_network("github.com"):
+    elif args.tunnel == "cloudflared-account" and not (os.environ.get("CLOUDFLARE_TUNNEL_TOKEN") and args.cf_hostname):
+        print("tunnel: SKIPPED (CLOUDFLARE_TUNNEL_TOKEN or --cf-hostname is missing); running with TUNNEL='none'")
+        args.tunnel = "none"
+    elif args.tunnel.startswith("cloudflared") and not have_network("github.com"):
         print("tunnel: SKIPPED (no outbound network to github.com for the cloudflared download); running with TUNNEL='none'")
         args.tunnel = "none"
     if not have_network("github.com"):
