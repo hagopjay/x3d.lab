@@ -89,12 +89,33 @@ def get_engine(lab: Lab, source="auto", drive_dir=None, ghcr_tag=None, ghcr_user
         shutil.rmtree(dest, ignore_errors=True)
     tried = []
     drive_dir = Path(drive_dir) if drive_dir else None
+    if drive_dir and not drive_mounted(drive_dir):
+        raise RuntimeError("Google Drive is not mounted (%s does not exist): run `from google.colab import drive; "
+                           "drive.mount('/content/drive', force_remount=True)`, sign in with the account that owns the engine "
+                           "files, then run this step again" % drive_dir.parent)
     if source in ("auto", "cache") and drive_dir:
+        _settle(drive_dir / "cache")
+        parts = [d for d in E.pick_version(glob.glob(str(drive_dir / "cache" / "UE_*_parts")), want) if (Path(d) / "parts.json").exists()]
+        if parts:
+            lab.log("restoring the engine from your Drive in parallel parts: %s" % os.path.basename(parts[-1]))
+            try:
+                st = E.extract_parts(parts[-1], dest, log=lab.log)
+                E.fix_exec_bits(dest)
+                if E.check_engine(dest)["ok"]:
+                    return {"source": "drive cache", "archive": parts[-1], "parts": st, **E.check_engine(dest),
+                            "seconds": round(time.time() - t0, 1)}
+                tried.append("parts %s did not give a working engine" % parts[-1])
+            except Exception as exc:
+                tried.append("parts %s failed: %s" % (parts[-1], str(exc)[:200]))
+            shutil.rmtree(dest, ignore_errors=True)
         arcs = E.pick_version(glob.glob(str(drive_dir / "cache" / "UE_*_trimmed.tar.*")), want)
         if arcs:
             lab.log("restoring the trimmed engine from your Drive: %s" % os.path.basename(arcs[-1]))
             dest.parent.mkdir(parents=True, exist_ok=True)
-            r = E.run_logged(E.unarchive_cmd(arcs[-1], dest.parent), lab.log)
+            try:
+                r = E.extract_archive(arcs[-1], dest.parent, log=lab.log)
+            except Exception as exc:
+                r = {"rc": 1, "error": str(exc)[:300]}
             side = Path(arcs[-1].split(".tar")[0] + ".json")
             top = json.loads(side.read_text()).get("top") if side.exists() else None
             if top and (dest.parent / top).exists() and not dest.exists():
@@ -147,6 +168,54 @@ def get_engine(lab: Lab, source="auto", drive_dir=None, ghcr_tag=None, ghcr_user
     if source in ("auto", "ghcr") and not ghcr_token:
         tried.append("no GHCR_TOKEN secret, so the container route was not tried")
     raise RuntimeError("no engine found: " + "; ".join(tried) + ". See 'Your one-time step' at the top of the notebook.")
+
+
+def drive_mounted(drive_dir) -> bool:
+    """False on Colab when Google Drive is not mounted (an unmounted /content/drive used to look like an empty Drive:
+    'no engine found', 11 Nov 2026). Outside Colab any existing folder counts."""
+    d = Path(drive_dir)
+    if str(d).startswith("/content/drive/"):
+        return Path("/content/drive/MyDrive").is_dir() and d.parent.exists()
+    return d.exists() or d.parent.exists()
+
+
+def _settle(folder, tries=4, wait=3.0):
+    """Drive's FUSE listing can be empty for a few seconds after mounting: list again before deciding it is empty."""
+    for _ in range(tries):
+        try:
+            if any(Path(folder).iterdir()):
+                return
+        except OSError:
+            pass
+        time.sleep(wait)
+
+
+def cache_engine_parts(lab: Lab, drive_dir, version, n=E.PARTS) -> dict:
+    """The trimmed engine as n zstd parts in DRIVE/cache/UE_<version>_parts/ (restored n at a time: one Drive read stream
+    runs at ~40-45 MB/s on Colab, so the 13.6 GB single archive took 5-10 minutes)."""
+    out = Path(drive_dir) / "cache" / ("UE_%s_parts" % version)
+    if (out / "parts.json").exists():
+        return {"skipped": "already cached in parts", "dir": str(out)}
+    size = E.du_gb(lab.engine_dir)
+    free = E.drive_free_gb(str(Path(drive_dir) / "cache"))
+    if free is not None and free < size * 0.7 + 2:
+        return {"skipped": "Drive has %.0f GB free; the parts need about %.0f GB" % (free, size * 0.6)}
+    tmp = lab.work / out.name
+    shutil.rmtree(tmp, ignore_errors=True)
+    t0 = time.time()
+    meta = E.write_parts(lab.engine_dir, tmp, n, log=lab.log)
+    part_dir = Path(str(out) + ".part")
+    shutil.rmtree(part_dir, ignore_errors=True)
+    part_dir.mkdir(parents=True)
+    for p in meta["parts"]:
+        shutil.copyfile(tmp / p["name"], part_dir / p["name"])
+    shutil.copyfile(tmp / "parts.json", part_dir / "parts.json")      # last: a folder with parts.json is complete
+    if out.exists():
+        shutil.rmtree(out)
+    os.replace(part_dir, out)
+    shutil.rmtree(tmp, ignore_errors=True)
+    return {"dir": str(out), "gb": round(sum(p["bytes"] for p in meta["parts"]) / 2**30, 2), "parts": len(meta["parts"]),
+            "seconds": round(time.time() - t0, 1)}
 
 
 def cache_engine(lab: Lab, drive_dir, version) -> dict:

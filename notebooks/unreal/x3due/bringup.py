@@ -34,7 +34,7 @@ def gentle(plan: dict, cpus: int, log=print) -> None:
 
 
 def up(work, drive_dir, engine_source="auto", engine_version="5.4", verbose=True, visual=True, every=20, gentle_mode=True,
-       cache=True, ghcr=(None, None, None), log=print, detect=None, enable=None, probe=None, runner=None) -> dict:
+       cache=True, fast_cache=True, ghcr=(None, None, None), log=print, detect=None, enable=None, probe=None, runner=None) -> dict:
     """detect / enable / probe / runner: stand-ins for tests (default: tier.detect, vulkan.enable, vulkan.probe,
     uerun.run)."""
     t0 = time.time()
@@ -67,6 +67,10 @@ def up(work, drive_dir, engine_source="auto", engine_version="5.4", verbose=True
     if not E.tool("zstd") and runner is None:
         subprocess.run("apt-get install -y -qq zstd || (apt-get update -qq && apt-get install -y -qq zstd)", shell=True,
                        capture_output=True)
+    if drive_dir and not pipeline.drive_mounted(drive_dir):
+        out["why"] = ("Google Drive is not mounted: run `from google.colab import drive; drive.mount('/content/drive', "
+                      "force_remount=True)`, sign in with the account that owns the engine files, then run this cell again")
+        return out
     try:
         eng = pipeline.get_engine(lab, engine_source, drive_dir, ghcr[0], ghcr[1], ghcr[2], want=engine_version)
     except Exception as exc:
@@ -83,6 +87,7 @@ def up(work, drive_dir, engine_source="auto", engine_version="5.4", verbose=True
         E.enable_vulkan_rt(lab.engine_dir, lab.settings["bindless"])
     if cache and eng["source"] != "drive cache" and Path(drive_dir).exists():
         out["steps"]["engine_cache"] = pipeline.cache_engine(lab, drive_dir, eng["version"])
+    fast = cache and fast_cache and Path(drive_dir).exists() and not eng.get("parts")
     if cache and Path(drive_dir).exists():
         out["steps"]["shader_cache_restore"] = pipeline.ddc_restore(lab, drive_dir, eng.get("version"))
         log("shaders  : %s" % out["steps"]["shader_cache_restore"])
@@ -99,6 +104,10 @@ def up(work, drive_dir, engine_source="auto", engine_version="5.4", verbose=True
     if cache and Path(drive_dir).exists() and s["seconds"] > 120:
         out["steps"]["shader_cache_save"] = pipeline.ddc_save(lab, drive_dir, eng.get("version"))
         log("shaders  : saved to Drive %s" % out["steps"]["shader_cache_save"])
+    if fast:
+        log("engine   : one-time split of the engine cache into %d parts on Drive (the next runtime restores it in parallel)…" % E.PARTS)
+        out["steps"]["engine_parts"] = pipeline.cache_engine_parts(lab, drive_dir, eng["version"])
+        log("engine   : %s" % out["steps"]["engine_parts"])
     out["ok"] = True
     out["seconds"] = round(time.time() - t0, 1)
     return out

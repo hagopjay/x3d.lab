@@ -87,11 +87,12 @@ for _m in (gobbler, project, pipeline, bringup):
     importlib.reload(_m)
 WORK = Path("/content/x3due") if Path("/content").is_dir() else Path.home() / "x3due"
 STAGE = "setup"
-try:
+if Path("/content").is_dir():                      # Colab: Drive holds the engine, the caches and the scoreboard
     from google.colab import drive
     drive.mount("/content/drive")
-except Exception:
-    pass
+    if not pipeline.drive_mounted(DRIVE_DIR):
+        raise SystemExit("❌ Google Drive did not mount (or %s is missing): run this cell again and sign in with the account "
+                         "that owns the engine files" % Path(DRIVE_DIR).parent)
 GOB_DRIVE = Path(DRIVE_DIR) / "gobbler"
 if Path(DRIVE_DIR).parent.exists():
     GOB_DRIVE.mkdir(parents=True, exist_ok=True)
