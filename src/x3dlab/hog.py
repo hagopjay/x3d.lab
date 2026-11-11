@@ -38,13 +38,13 @@ from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from . import aio, runtime, scenegen, scenes
+from . import aio, pins, runtime, scenegen, scenes
 from .events import bus
 
-LOOM_REPO = "https://github.com/hagopjay/x3d.loom"
-LOOM_REF = "d55fd0e"                    # main on 10 Nov 2026 (bridge-review merged)
-BABYLON_VERSION = "9.32.0"              # the version the loom receipts were taken with
-NODE_VERSION = "22.11.0"
+LOOM_REPO = "https://github.com/%s" % pins.get("x3d_loom", "repo", "hagopjay/x3d.loom")
+LOOM_REF = pins.get("x3d_loom", "ref")             # a full hash (pins.toml says why)
+BABYLON_VERSION = pins.get("x3d_loom", "babylon", "9.32.0")
+NODE_VERSION = pins.get("x3d_loom", "node", "22.11.0")
 STAGES = ("probe", "corpus", "matrix", "loom", "stress", "traces", "findings")
 
 # Components whose nodes put something on screen by themselves (in a Shape, or as a light/background).
@@ -221,29 +221,61 @@ def probe(lab=None) -> dict:
     if bl is not None:
         d["blender"] = {"version": bl.version, "best": bl.best_backend, "backends": bl.info.get("backends")}
     d["chrome"] = chrome_renderers()
+    from . import toolchain
+    d["toolchain"] = toolchain.report(lab)
     return d
 
 
 # ====================================================================== corpus
-def loom_checkout(ref: str = LOOM_REF, path: str = "") -> Path:
-    """x3d.loom at `ref` (a shallow fetch of that one commit), or an existing checkout."""
+def _git(cmd: list, cwd: Path, env: dict, timeout: float = 600, check: bool = True) -> subprocess.CompletedProcess:
+    r = subprocess.run(["git"] + cmd, cwd=cwd, capture_output=True, text=True, env=env, timeout=timeout)
+    if check and r.returncode:
+        raise RuntimeError("git %s failed: %s" % (" ".join(cmd), (r.stderr or r.stdout)[-400:]))
+    return r
+
+
+def resolve_ref(cwd: Path, ref: str, env: dict) -> str:
+    """The full commit hash for `ref` (a full or short hash, a branch or a tag) on `origin`.
+    GitHub serves a shallow fetch of a commit only by its full hash, so a short one is looked up first: among the
+    advertised branch and tag tips, and failing that in the history (a blob-less fetch: commits and trees only)."""
+    if re.fullmatch(r"[0-9a-f]{40}", ref or ""):
+        return ref
+    ls = _git(["ls-remote", "origin"], cwd, env, timeout=120).stdout.split("\n")
+    for line in ls:
+        sha, _, name = line.partition("\t")
+        if name in (ref, "refs/heads/%s" % ref, "refs/tags/%s" % ref, "refs/tags/%s^{}" % ref):
+            return sha
+    for line in ls:
+        sha = line.partition("\t")[0]
+        if re.fullmatch(r"[0-9a-f]{4,39}", ref or "") and sha.startswith(ref.lower()):
+            return sha
+    _git(["fetch", "-q", "--filter=blob:none", "origin"], cwd, env, timeout=900)
+    r = _git(["rev-parse", "--verify", "-q", "%s^{commit}" % ref], cwd, env, check=False)
+    if r.returncode or not r.stdout.strip():
+        raise RuntimeError("x3d.loom has no commit, branch or tag %r" % ref)
+    return r.stdout.strip()
+
+
+def loom_checkout(ref: str = LOOM_REF, path: str = "", repo: str = "") -> Path:
+    """x3d.loom at `ref` (a shallow fetch of that one commit), or an existing checkout given by `path`."""
     if path:
         p = Path(path)
         if not (p / "x3d.webgpu" / "bridge").is_dir():
             raise RuntimeError("%s is not an x3d.loom checkout (no x3d.webgpu/bridge)" % p)
         return p
-    p = runtime.sub("vendor") / ("x3d.loom-%s" % ref)
+    p = runtime.sub("vendor") / ("x3d.loom-%s" % ref[:12])
     if (p / "x3d.webgpu" / "bridge" / "fixtures").is_dir():
         return p
     if p.exists():
         shutil.rmtree(p)
     p.mkdir(parents=True)
     env = dict(os.environ, GIT_LFS_SKIP_SMUDGE="1")
-    for cmd in (["git", "init", "-q"], ["git", "remote", "add", "origin", LOOM_REPO],
-                ["git", "fetch", "-q", "--depth", "1", "origin", ref], ["git", "checkout", "-q", "FETCH_HEAD"]):
-        r = subprocess.run(cmd, cwd=p, capture_output=True, text=True, env=env, timeout=600)
-        if r.returncode:
-            raise RuntimeError("%s failed: %s" % (" ".join(cmd), (r.stderr or r.stdout)[-400:]))
+    _git(["init", "-q"], p, env)
+    _git(["remote", "add", "origin", repo or LOOM_REPO], p, env)
+    sha = resolve_ref(p, ref, env)
+    if _git(["fetch", "-q", "--depth", "1", "origin", sha], p, env, check=False).returncode:
+        _git(["fetch", "-q", "--filter=blob:none", "origin"], p, env, timeout=900)     # a server that refuses fetch-by-hash
+    _git(["checkout", "-q", sha], p, env)
     return p
 
 
@@ -489,8 +521,8 @@ def _babylon_js(node: str) -> Path:
     return js
 
 
-def loom_suite(loom_dir: Path, names: list[str] | None = None, timeout: float = 2400) -> dict:
-    """Run x3d.loom's bridge fixtures (reader + Babylon vs X_ITE). Returns {env, results:{node:{...}}, nodes_status}."""
+def _loom_env(loom_dir: Path) -> tuple:
+    """(bridge dir, node, env, babylon.js) ready for the bridge's own runner; installs what it needs once."""
     from . import browser as B
     bridge = loom_dir / "x3d.webgpu" / "bridge"
     node = _node_bin()
@@ -502,15 +534,82 @@ def loom_suite(loom_dir: Path, names: list[str] | None = None, timeout: float = 
             raise RuntimeError("npm ci failed: %s" % (r.stderr or r.stdout)[-400:])
     B.ensure_playwright()
     env.update(CHROMIUM_EXECUTABLE=B.chromium_path() or "", XITE_DIR=str(B.xite_dir()))
-    babylon = _babylon_js(node)
-    names = names or sorted(p.name[:-len(".test.json")] for p in (bridge / "fixtures").glob("*.test.json"))
-    with bus.span("x3d.loom bridge fixtures (%d)" % len(names), src="hog"):
-        r = subprocess.run([node, "tools/run-tests.js", "--babylon", str(babylon)] + names, cwd=bridge, capture_output=True,
-                           text=True, timeout=timeout, env=env)
+    return bridge, node, env, _babylon_js(node)
+
+
+def run_fixtures(loom_dir: Path, names: list, timeout: float = 2400) -> dict:
+    """One call of the bridge's runner (`tools/run-tests.js`): one fresh browser, the fixtures in the order given.
+    Returns its JSON line: {ok, env, results: {name: {ok, ours, xite, msg, ...}}}."""
+    bridge, node, env, babylon = _loom_env(Path(loom_dir))
+    r = subprocess.run([node, "tools/run-tests.js", "--babylon", str(babylon)] + list(names), cwd=bridge, capture_output=True,
+                       text=True, timeout=timeout, env=env)
     line = next((ln for ln in reversed(r.stdout.splitlines()) if ln.startswith("{")), "")
     if not line:
         raise RuntimeError("run-tests.js printed no result (exit %s): %s" % (r.returncode, (r.stderr or r.stdout)[-600:]))
-    out = json.loads(line)
+    return json.loads(line)
+
+
+def _fixture_mode(bridge: Path, name: str) -> str:
+    try:
+        return json.loads((bridge / "fixtures" / (name + ".test.json")).read_text()).get("mode") or "events"
+    except Exception:
+        return "events"
+
+
+def _slim(r: dict) -> dict:
+    return {k: r.get(k) for k in ("ok", "ours", "xite", "msg") if k in r}
+
+
+def isolate_failures(loom_dir: Path, names: list, results: dict, runner=None) -> dict:
+    """Run every failing fixture again ALONE, in a fresh browser. Fails alone -> a **defect** of the bridge (or of the
+    fixture). Passes alone -> a **leak**: something an earlier fixture left behind in the shared page (the runner
+    keeps one Babylon page for every scene fixture). For a leak, the fixture that ran just before it in the same page
+    is tried as the culprit: [culprit, victim] in a fresh browser.
+    Writes `alone`, `verdict` and `culprit` into each failing result; returns {defects: [...], leaks: {victim: culprit}}."""
+    runner = runner or run_fixtures
+    bridge = Path(loom_dir) / "x3d.webgpu" / "bridge"
+    order = [n for n in names if n in results]
+    out = {"defects": [], "leaks": {}}
+    for n in [n for n in order if not results[n].get("ok")]:
+        r = results[n]
+        try:
+            alone = (runner(loom_dir, [n]).get("results") or {}).get(n) or {}
+        except Exception as exc:
+            r["alone"] = {"ok": None, "msg": "could not rerun: %s" % str(exc)[:200]}
+            continue
+        r["alone"] = _slim(alone)
+        if not alone.get("ok"):
+            r["verdict"] = "defect"
+            out["defects"].append(n)
+            continue
+        r["verdict"] = "leak"
+        mode = _fixture_mode(bridge, n)
+        before = [m for m in order[:order.index(n)] if _fixture_mode(bridge, m) == mode]
+        r["culprit"] = None
+        if before:
+            pred = before[-1]
+            try:
+                pair = (runner(loom_dir, [pred, n]).get("results") or {}).get(n) or {}
+                r["pair"] = {"before": pred, **_slim(pair)}
+                if not pair.get("ok"):
+                    r["culprit"] = pred
+            except Exception as exc:
+                r["pair"] = {"before": pred, "msg": "could not run: %s" % str(exc)[:200]}
+        out["leaks"][n] = r["culprit"]
+    return out
+
+
+def loom_suite(loom_dir: Path, names: list[str] | None = None, timeout: float = 2400, isolate: bool = True) -> dict:
+    """Run x3d.loom's bridge fixtures (reader + Babylon vs X_ITE). Returns {env, results:{node:{...}}, nodes_status}.
+    With `isolate`, each failure is rerun alone and labelled defect or leak (see isolate_failures)."""
+    bridge = Path(loom_dir) / "x3d.webgpu" / "bridge"
+    names = names or sorted(p.name[:-len(".test.json")] for p in (bridge / "fixtures").glob("*.test.json"))
+    with bus.span("x3d.loom bridge fixtures (%d)" % len(names), src="hog"):
+        out = run_fixtures(loom_dir, names, timeout)
+    res = out.get("results") or {}
+    if isolate and len(names) > 1 and any(not v.get("ok") for v in res.values()):
+        with bus.span("x3d.loom: rerun %d failures alone" % sum(1 for v in res.values() if not v.get("ok")), src="hog"):
+            out["isolation"] = isolate_failures(loom_dir, names, res)
     try:
         nodes = json.loads((bridge / "NODES.json").read_text())["nodes"]
         out["nodes_status"] = dict(Counter(v.get("status") for v in nodes.values()))
@@ -697,10 +796,15 @@ def findings(run: HogRun) -> list[Finding]:
     for node, r in res.items():
         if r.get("ok"):
             continue
+        if r.get("verdict") == "leak":                 # passes alone: something an earlier fixture left behind
+            add(("loom", "fails only after other fixtures in the same page, passes alone: a teardown leak"), node,
+                "culprit: %s" % r["culprit"] if r.get("culprit") else "the fixture just before it is not the culprit on its own")
+            continue
         if r.get("xiteOk") is False and r.get("oursOk"):
             add(("loom", "X_ITE disagrees with the bridge spec (check X_ITE or the spec)"), node, r.get("msg"))
         elif r.get("oursOk") is False:
-            add(("loom", "bridge (Babylon reader) fails its fixture"), node, r.get("ours"))
+            add(("loom", "bridge (Babylon reader) fails its fixture%s" % (", alone too" if r.get("verdict") == "defect" else "")),
+                node, r.get("ours"))
         else:
             add(("loom", "fixture did not run cleanly"), node, r.get("msg"))
     sev = {"x3d_mcp": "high", "x_ite": "medium", "blender_io": "medium", "loom": "medium"}
@@ -912,8 +1016,12 @@ def html(r: HogRun) -> str:
     if r.loom:
         res = r.loom.get("results") or {}
         ok = sum(1 for v in res.values() if v.get("ok"))
-        lo = "<h3 style='margin:16px 0 4px'>Babylon bridge (x3d.loom)</h3><div>%d of %d fixtures pass against X_ITE · %s</div>" % (
-            ok, len(res), _esc(json.dumps(r.loom.get("env", {}))[:300]))
+        iso = r.loom.get("isolation") or {}
+        lo = "<h3 style='margin:16px 0 4px'>Babylon bridge (x3d.loom)</h3><div>%d of %d fixtures pass against X_ITE%s · %s</div>" % (
+            ok, len(res), (" · rerun alone: %d defect(s) %s, %d leak(s) %s" % (
+                len(iso.get("defects", [])), _esc(", ".join(iso.get("defects", []))), len(iso.get("leaks", {})),
+                _esc(", ".join("%s%s" % (v, " (after %s)" % c if c else "") for v, c in iso.get("leaks", {}).items())))) if iso else "",
+            _esc(json.dumps(r.loom.get("env", {}))[:300]))
     sh = ""
     if r.stress:
         sh = "<h3 style='margin:16px 0 4px'>GPU stress (%s)</h3><div>warm-up: %s · summary: %s</div>" % (

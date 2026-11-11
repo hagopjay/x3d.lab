@@ -61,7 +61,7 @@ GLTF_VISUAL_LOSS = {"Text", "Billboard", "Switch", "LOD", "ParticleSystem", "Env
                     "FogCoordinate", "MovieTexture", "PointSet", "IndexedLineSet", "LineSet", "Polyline2D", "Polypoint2D",
                     "Arc2D", "Circle2D", "ScreenGroup", "Layering", "LayerSet", "Layer", "LayoutLayer", "ViewpointGroup"}
 
-NO_SHRINK = {"blender-unsupported", "blender-flat"}
+NO_SHRINK = {"blender-unsupported", "blender-flat", "loom-leak"}   # a leak needs its culprit: shrinking alone loses it
 CURVED = ("Sphere", "Cylinder", "Cone")
 # What changes colours on the way to glTF by design (lighting from an environment, 3D and cube textures, shaders, fog);
 # Phong (X3D) against PBR (glTF) alone moves colours by 30-50 of 255, under colour_kind's threshold.
@@ -78,7 +78,7 @@ TARGETS = {"x3d_mcp": "x3d_mcp (validator, hagopjay fork)", "xsd": "X3D XSD (Web
 
 # How expensive one re-check is, in rough seconds: cheap claims are shrunk first.
 COST = {"fork-rejects-valid": 0.1, "fork-accepts-invalid": 0.1, "xsd-stricter-than-uom": 0.1, "xite-error": 0.6,
-        "blender-import": 3, "blender-export-invalid": 4, "gltf-invalid": 5, "gltf-lost": 6, "gltf-colour": 6, "loom-error": 7, "loom-differs": 7, "loom-colour": 7}
+        "blender-import": 3, "blender-export-invalid": 4, "gltf-invalid": 5, "gltf-lost": 6, "gltf-colour": 6, "loom-error": 7, "loom-differs": 7, "loom-colour": 7, "loom-leak": 99}
 
 RULE_TEXT = {
     "no-scene": "Reply with only the X3D document, starting with <?xml version=\"1.0\" encoding=\"UTF-8\"?>; no prose.",
@@ -496,8 +496,8 @@ def loom_run(loom_dir: Path, fixtures: dict) -> dict:
     for name, (xml, spec) in fixtures.items():
         (d / (name + ".x3d")).write_text(xml, encoding="utf-8")
         (d / (name + ".test.json")).write_text(json.dumps(spec, indent=1), encoding="utf-8")
-    try:
-        out = hog.loom_suite(Path(loom_dir), ["foundry/" + n for n in fixtures], timeout=300 + 60 * len(fixtures))
+    try:       # one runner call, one fresh browser, the scenes in this order (the Foundry isolates claims itself)
+        out = hog.run_fixtures(Path(loom_dir), ["foundry/" + n for n in fixtures], timeout=300 + 60 * len(fixtures))
     finally:
         for name in fixtures:
             for ext in (".x3d", ".test.json"):
@@ -721,8 +721,8 @@ def find_claims(rnd: Round, loom: dict) -> list[Claim]:
                                  lm["compare"]["match"], lm["compare"]["iou"]),
                              evidence={"compare": lm["compare"]},
                              expected=("the bridge has not started %s" % ", ".join(todo)) if todo else ""))
-        elif formats.colour_kind(lm.get("compare") or {}):
-            ck = formats.colour_kind(lm["compare"])
+        elif formats.colour_kind(lm.get("compare") or {}, against="bridge_vs_x_ite"):
+            ck = formats.colour_kind(lm["compare"], against="bridge_vs_x_ite")
             out.append(Claim("loom-colour", "loom", s.id, s.node, s.version, _sig("loom-colour", ck),
                              "the bridge draws the right shapes in the wrong colours (%s: mean change %.0f of 255, brightness x%.2f)" % (
                                  ck, lm["compare"]["colour_delta"], lm["compare"].get("luma_ratio") or 0),
@@ -817,19 +817,61 @@ def keep_for(c: Claim, bench: Bench, rnd: Round):
             cmp_ = formats.compare_pngs(a.png, b.png)
             return cmp_.get("match") is not None and cmp_["match"] < GLTF_MATCH and (cmp_.get("cov_original") or 0) > 0.002
         return keep, valid
-    if c.kind in ("loom-error", "loom-differs", "loom-colour"):
-        want = c.signature.split("|", 1)[1]
+    if c.kind in LOOM_KINDS:
         def keep(x):
-            r = bench.loom({"shrink": x}).get("shrink") or {}
-            if c.kind == "loom-error":
-                return bool(r.get("error")) and _norm(r["error"]) == want
-            if c.kind == "loom-colour":
-                cm = r.get("compare") or {}
-                return not r.get("error") and (cm.get("match") or 0) >= LOOM_MATCH and formats.colour_kind(cm) == want
-            cm = r.get("compare") or {}
-            return not r.get("error") and cm.get("match") is not None and cm["match"] < LOOM_MATCH and (cm.get("cov_original") or 0) > 0.002
+            return loom_holds(c, (bench.loom({"shrink": x}).get("shrink") or {}))
         return keep, valid
     raise ValueError(c.kind)
+
+
+LOOM_KINDS = ("loom-error", "loom-differs", "loom-colour")
+
+
+def loom_holds(c: Claim, r: dict) -> bool:
+    """Is bridge claim `c` true of one probe result `r` (from loom_shots)?"""
+    want = c.signature.split("|", 1)[1]
+    cm = r.get("compare") or {}
+    if c.kind == "loom-error":
+        return bool(r.get("error")) and _norm(r["error"]) == want
+    if c.kind == "loom-colour":
+        return not r.get("error") and (cm.get("match") or 0) >= LOOM_MATCH and formats.colour_kind(cm, against="bridge_vs_x_ite") == want
+    return not r.get("error") and cm.get("match") is not None and cm["match"] < LOOM_MATCH and (cm.get("cov_original") or 0) > 0.002
+
+
+def isolate_claims(rnd: Round, bench: Bench) -> None:
+    """The bridge drew every scene of the round one after another in one page, so a claim about scene N may be about
+    what scenes 1..N-1 left behind. Each new bridge claim is checked again ALONE, in a fresh browser:
+    still true -> a defect (evidence says so); not true alone -> a **loom-leak**, and the scene drawn just before it is
+    tried as the culprit ([culprit, victim] in a fresh browser)."""
+    probed = [s for s in rnd.scenes if (s.engines or {}).get("loom")]           # the order the probe drew them in
+    for c in [c for c in rnd.claims if c.kind in LOOM_KINDS and not c.known]:
+        s = rnd.scene(c.scene)
+        name = _safe(s.id)
+        try:
+            alone = bench.loom({name: s.xml}).get(name) or {}
+        except Exception as exc:
+            c.evidence["alone"] = "could not rerun: %s" % str(exc)[:200]
+            continue
+        if loom_holds(c, alone):
+            c.evidence["alone"] = "true alone in a fresh browser: a defect, not a leak"
+            continue
+        culprit = None
+        before = probed[:probed.index(s)] if s in probed else []
+        if before:
+            p = before[-1]
+            try:
+                pair = bench.loom({_safe(p.id): p.xml, name: s.xml}).get(name) or {}
+                if loom_holds(c, pair):
+                    culprit = p
+            except Exception:
+                pass
+        was = c.kind
+        c.kind = "loom-leak"
+        c.signature = _sig("loom-leak", "%s after %s" % (s.node, culprit.node if culprit else "?"))
+        c.summary = ("%s, but only after other scenes ran in the same page; alone in a fresh browser it is right: "
+                     "something leaks between worlds%s" % (c.summary, (" (the scene before it, %s, is enough)" % culprit.node)
+                                                           if culprit else " (the scene just before it is not enough on its own)"))
+        c.evidence.update(alone="not true alone: a leak", was=was, culprit=culprit.id if culprit else None)
 
 
 def shrink_claims(rnd: Round, bench: Bench) -> None:
@@ -1062,6 +1104,7 @@ ISSUE_TITLES = {
     "loom-error": "The bridge throws on a valid scene ({node})",
     "loom-differs": "The bridge draws a different picture than X_ITE ({node})",
     "loom-colour": "The bridge draws the right shapes in the wrong colours ({what})",
+    "loom-leak": "The bridge leaks state from one world into the next ({what})",
 }
 
 
@@ -1077,7 +1120,11 @@ def issue_markdown(rnd: Round, c: Claim) -> str:
              "**For:** %s  " % TARGETS.get(c.target, c.target), "**Claim:** %s" % c.summary, ""]
     if c.also:
         lines += ["The same thing happened in %d other scene(s) this round: %s." % (len(c.also), ", ".join(c.also[:6])), ""]
-    lines += ["## Smallest scene that shows it%s" % sz, "", "```xml", xml.strip(), "```", "", "## What each judge said", ""]
+    if c.kind == "loom-leak" and c.evidence.get("culprit") and rnd.scene(c.evidence["culprit"]):
+        lines += ["## Run this scene first, in the same page", "", "```xml", rnd.scene(c.evidence["culprit"]).xml.strip(), "```", "",
+                  "## then this one: wrong after the first, right alone", "", "```xml", xml.strip(), "```", "", "## What each judge said", ""]
+    else:
+        lines += ["## Smallest scene that shows it%s" % sz, "", "```xml", xml.strip(), "```", "", "## What each judge said", ""]
     j = s.referee.get(c.which) or {}
     lines.append("- x3d_mcp (fork): %s" % ("valid" if j.get("fork", {}).get("ok") else "; ".join(j.get("fork", {}).get("messages", [])[:2]) or "invalid"))
     lines.append("- lxml + x3d-%s.xsd: %s" % (c.version, "valid" if j.get("xsd", {}).get("ok") else j.get("xsd", {}).get("first", "")[:300]))
@@ -1327,6 +1374,14 @@ def run(lab, cfg: FoundryConfig | None = None, **kw) -> Round:
             rec = st["signatures"].get(c.signature) or {}
             c.known = bool(rec.get("reported") or rec.get("same_as"))
 
+    def st_isolate():
+        if "loom" in cfg.engines and loom_dir["p"] is not None:
+            isolate_claims(rnd, bench["b"] or Bench(lab, rnd, loom_dir["p"]))
+            for c in rnd.claims:                        # a claim that became a leak has a new signature: known again?
+                if c.kind == "loom-leak":
+                    rec = st["signatures"].get(c.signature) or {}
+                    c.known = bool(rec.get("reported") or rec.get("same_as"))
+
     def st_shrink():
         if cfg.shrink:
             shrink_claims(rnd, bench["b"] or Bench(lab, rnd, loom_dir["p"]))
@@ -1354,11 +1409,16 @@ def run(lab, cfg: FoundryConfig | None = None, **kw) -> Round:
             rnd.rules_next = learn_rules(rnd, st)
 
     for name, fn in (("target", st_target), ("generate", st_generate), ("referee", st_referee), ("engines", st_engines),
-                     ("claims", st_claims), ("shrink", st_shrink), ("write", st_write), ("learn", st_learn)):
+                     ("claims", st_claims), ("isolate", st_isolate), ("shrink", st_shrink), ("write", st_write), ("learn", st_learn)):
         stage(name, fn)
         if name == "generate" and not rnd.scenes:
             break
     rnd.ended = time.time()
+    try:
+        from . import toolchain
+        rnd.env["toolchain"] = toolchain.report(lab)
+    except Exception as exc:
+        rnd.env["toolchain"] = {"error": str(exc)[:200]}
     rnd.scoreboard = scoreboard(rnd, st)
     update_state(rnd, st)
     save_state(sp, st)

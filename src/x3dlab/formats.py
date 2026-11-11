@@ -11,6 +11,10 @@ different referee, so a loss can be pinned on one step:
      glTF under the original's camera and headlight. Same renderer, same view,   losses below are subtracted first)
      so a silhouette that changes is something the conversion lost.
 
+Stable API (other notebooks and sessions build on these names; a rename gets a deprecation alias first):
+  match, compare_pngs, colour_kind, COLOUR_DELTA, validate_gltf, error_codes, losses, EXPECTED_LOSS, inline_wrapper,
+  has_usd. tests/test_formats_api.py holds each of them to its signature.
+
 Expected losses: glTF 2.0 has no place for X3D's behaviour (sensors, interpolators, ROUTEs, Script: glTF animation and
 KHR_interactivity are a different model), for Text, Billboard, LOD and Switch semantics, Background and Fog, or for
 scoped lights. A scene whose difference is all expected is not a finding; one with unexpected losses is.
@@ -222,8 +226,19 @@ def compare_pngs(original: bytes | None, converted: bytes | None) -> dict:
             "luma_ratio": round(ratio, 3) if ratio is not None else None}
 
 
-def colour_kind(cmp_: dict, delta: float = 64.0) -> str:
-    """'' when the colours agree well enough (lighting models differ a little), else darker / brighter / hue."""
+# Mean colour change (0-255, over the pixels both pictures cover) above which colours "disagree", per comparison.
+# Each pair of renderers shades differently by design (Phong vs PBR, tone mapping), so each gets its own number:
+# calibrated on scenes where nothing was lost. New renderers (Unreal...) add a key; nobody keeps a local copy.
+COLOUR_DELTA = {
+    "x_ite_vs_gltf_in_x_ite": 64.0,   # X3D in X_ITE vs the glTF trip in X_ITE: 34-52 on clean scenes (10 Nov)
+    "bridge_vs_x_ite": 64.0,          # x3d.loom's Babylon body vs X_ITE (Phong vs Babylon's standard material)
+}
+
+
+def colour_kind(cmp_: dict, delta: float | None = None, against: str = "x_ite_vs_gltf_in_x_ite") -> str:
+    """'' when the colours agree well enough (lighting models differ a little), else darker / brighter / hue.
+    The threshold is `delta` if given, else COLOUR_DELTA[against]."""
+    delta = float(delta if delta is not None else COLOUR_DELTA.get(against, 64.0))
     d, r = cmp_.get("colour_delta"), cmp_.get("luma_ratio")
     if d is None or d <= delta:
         return ""
@@ -256,14 +271,24 @@ def losses(types_before: list, convert: dict | None) -> dict:
     return {"expected": exp, "counts": changed, "unexpected": unexpected, "info": info}
 
 
-def has_usd() -> dict:
-    """Can this machine do the USD trip? (usd-core for validation, and a Blender with the USD exporter.)"""
-    out = {}
+def has_usd(blender=None) -> dict:
+    """Can this machine do the USD trip? {"usd_core": bool, "version": "0.25.11"|None, "checker": bool,
+    "blender_usd": bool|None}. usd-core (Pixar's wheel) validates; Blender writes. Pass a lab Blender to know whether
+    its build has the USD exporter (None when not asked). Truthy keys only when that part is really there."""
+    out = {"usd_core": False, "version": None, "checker": False, "blender_usd": None}
     try:
-        import pxr  # noqa: F401
+        from pxr import Usd
         out["usd_core"] = True
+        out["version"] = ".".join(str(x) for x in Usd.GetVersion())
+        from pxr import UsdUtils  # noqa: F401
+        out["checker"] = hasattr(UsdUtils, "ComplianceChecker")
     except Exception:
-        out["usd_core"] = False
+        pass
+    if blender is not None:
+        try:
+            out["blender_usd"] = bool((blender.info or {}).get("usd", True))
+        except Exception:
+            out["blender_usd"] = None
     return out
 
 
