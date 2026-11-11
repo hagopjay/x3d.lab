@@ -77,6 +77,10 @@ USD = "auto"  #@param ["auto", "off"]
 CACHE_ENGINE = True  #@param {type:"boolean"}
 CACHE_DDC = True  #@param {type:"boolean"}
 FORCE_HWRT = False  #@param {type:"boolean"}
+VERBOSE = True  #@param {type:"boolean"}
+VISUAL = True  #@param {type:"boolean"}
+HEARTBEAT_S = 20  #@param {type:"slider", min:5, max:120, step:5}
+#@markdown **VERBOSE** streams Unreal's important log lines while it runs, plus a heartbeat every `HEARTBEAT_S` seconds (shader jobs and their rate, workers, Unreal's memory, RAM, VRAM, GPU %, free disk), and warns when Unreal's memory grows with nothing to show for it. **VISUAL** shows every still the moment it is written and a VRAM/GPU chart after each Unreal job.
 LAB_REPO = "hagopjay/x3d.lab"
 LAB_REF = "main"
 #@markdown **auto** rung: *high* on a T4 or L4, *ultra* on A100 / G4. **match** look = X3D-like light (no tone curve, no global illumination): use it to compare engines; **cinematic** = Lumen GI, filmic tone curve.
@@ -97,13 +101,33 @@ def sh(cmd, timeout=1800):
     r = subprocess.run(cmd, shell=isinstance(cmd, str), capture_output=True, text=True, timeout=timeout)
     return (r.stdout + r.stderr).strip()
 
+def git(args, timeout=1800):
+    """git with a read-only token from Colab Secrets (GITHUB_TOKEN) sent as a header for this repo only, the same way as
+    notebooks 01-06: works when the repo is private; the token never goes into a URL, a file or the output."""
+    env = dict(os.environ)
+    try:
+        from google.colab import userdata
+        token = userdata.get("GITHUB_TOKEN")
+    except Exception:
+        token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        import base64
+        env.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="http.https://github.com/%s.extraheader" % LAB_REPO,
+                   GIT_CONFIG_VALUE_0="AUTHORIZATION: basic " + base64.b64encode(("x-access-token:" + token).encode()).decode())
+    r = subprocess.run(["git"] + args, capture_output=True, text=True, timeout=timeout, env=env)
+    return r.returncode, (r.stdout + r.stderr).strip()
+
 LAB_DIR = Path("/content/x3d.lab") if Path("/content").is_dir() else Path.home() / "x3d.lab"
 if os.environ.get("X3DLAB_DEV") and Path(os.environ["X3DLAB_DEV"]).is_dir():
     LAB_DIR = Path(os.environ["X3DLAB_DEV"])                     # a local checkout
 elif not (LAB_DIR / ".git").exists():
-    print(sh("git clone -q --depth 1 --branch %s https://github.com/%s %s" % (LAB_REF, LAB_REPO, LAB_DIR)))
+    rc, msg = git(["clone", "-q", "--depth", "1", "--branch", LAB_REF, "https://github.com/%s" % LAB_REPO, str(LAB_DIR)])
+    if rc:
+        raise SystemExit("%s\ncould not clone github.com/%s. If that repo is private, add a read-only GitHub token as the Colab "
+                         "secret GITHUB_TOKEN (key icon, left bar) and allow this notebook to read it." % (msg, LAB_REPO))
 else:
-    print(sh("git -C %s pull -q --ff-only" % LAB_DIR))
+    rc, msg = git(["-C", str(LAB_DIR), "pull", "-q", "--ff-only"])
+    print(msg or "helpers up to date")
 UNREAL_DIR = LAB_DIR / "notebooks" / "unreal"
 sys.path.insert(0, str(UNREAL_DIR))
 if importlib.util.find_spec("x3dlab") is None:
@@ -114,7 +138,7 @@ if importlib.util.find_spec("x3dlab") is None:
 if str(LAB_DIR / "src") not in sys.path:
     sys.path.insert(1, str(LAB_DIR / "src"))
 importlib.invalidate_caches()
-from x3due import (compare, convert, engine, engines, gltfstat, pipeline, project, report, showcase, tier, staging, uerun, vulkan,
+from x3due import (compare, convert, engine, engines, gltfstat, live, pipeline, project, report, showcase, tier, staging, uerun, vulkan,
                    x3dscene)
 SC = report.Scorecard()
 CARD = {"notebook": "07_Unreal_Fidelity", "lab_commit": sh("git -C %s rev-parse --short HEAD" % LAB_DIR), "options": {
@@ -248,6 +272,7 @@ except Exception:
     def secret(k):
         return os.environ.get(k)
 LAB = pipeline.Lab(work=WORK, hw=HW, plan=PLAN)
+LAB.live = live.Live(verbose=VERBOSE, visual=VISUAL, every=HEARTBEAT_S, disk_path=str(WORK)) if (VERBOSE or VISUAL) else None
 if not engine.tool("zstd") and HW["gpu"]:
     sh("apt-get install -y -qq zstd")      # multi-threaded compression for the Drive cache
 Path(DRIVE_DIR).mkdir(parents=True, exist_ok=True) if Path(DRIVE_DIR).parent.exists() else None
@@ -489,7 +514,7 @@ for n, res in IMP.items():
     if not ok:
         print("--- %s: the log lines that matter ---\n%s" % (n, out["excerpt"][-3000:]))
     for s in ok[:2]:
-        if s["png"]:
+        if s["png"] and not (LAB.live and s["png"] in LAB.live.shown):      # VISUAL already showed it live
             display(IPImage(filename=s["png"], width=640))
 CARD["renders"] = {n: {"rung": rung_name, "settings": RUNG_USED, "seconds": r["seconds"], "gpu": r.get("gpu"), "proof": r["proof"],
                        "stills": [{k: v for k, v in s.items() if k != "files"} for s in r["stills"]], "attempts": r["attempts"]}

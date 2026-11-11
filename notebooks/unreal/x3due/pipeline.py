@@ -44,6 +44,7 @@ class Lab:
                          "env": {}, "xvfb": False, "bindless": "RayTracingOnly", "usd": False}
         self.mapping = C.LightMapping()
         self.timings, self.attempts = {}, []
+        self.live = None                               # a live.Live: VERBOSE / VISUAL progress for every Unreal job
         for d in (self.work, self.out, self.ddc):
             d.mkdir(parents=True, exist_ok=True)
 
@@ -223,8 +224,9 @@ def restore_settings(lab: Lab, saved: dict) -> None:
     lab.write_project()
 
 
-def run_unreal(lab: Lab, make_cmd, label, log_dir, timeout=7200, done_file=None, max_attempts=4, need_render=True) -> dict:
-    """make_cmd(lab) -> argv. Runs, reads the log, retries along uerun.RETRY. Returns the last attempt plus the list."""
+def run_unreal(lab: Lab, make_cmd, label, log_dir, timeout=7200, done_file=None, max_attempts=4, need_render=True, watch=()) -> dict:
+    """make_cmd(lab) -> argv. Runs, reads the log, retries along uerun.RETRY. Returns the last attempt plus the list.
+    With lab.live set, every attempt streams its progress (and shows new images in `watch` folders) as it runs."""
     tried, attempts = [], []
     before = json.loads(json.dumps(lab.settings))      # a change that doesn't help is rolled back (see below)
     ok = False
@@ -235,7 +237,17 @@ def run_unreal(lab: Lab, make_cmd, label, log_dir, timeout=7200, done_file=None,
         log_path = Path(log_dir) / ("%s.%d.log" % (label, k))
         if done_file and os.path.exists(done_file):
             os.remove(done_file)
-        res = lab.runner(cmd, log_path, user=lab.user, env_vars=lab.env(), timeout=timeout, done_file=done_file)
+        live = lab.live
+        kw = {}
+        if live:
+            live.begin("%s%s" % (label, " (attempt %d: %s)" % (k + 1, tried[-1]) if tried else ""), watch)
+            kw = {"on_line": live.line, "on_tick": live.tick}
+        res = lab.runner(cmd, log_path, user=lab.user, env_vars=lab.env(), timeout=timeout, done_file=done_file, **kw)
+        if live:
+            try:
+                live.end(res)
+            except Exception:
+                pass
         text = Path(log_path).read_text(errors="replace") if Path(log_path).exists() else ""
         proof = uerun.rhi_proof(text)
         res.update(proof=proof, attempt=k, change=tried[-1] if tried else None, timing=uerun.first_render_seconds(text))
@@ -328,7 +340,8 @@ def render(lab: Lab, name, camera_names, rung_name, rung, look="cinematic", key=
     res_px = spec["jobs"][0]["resolution"] if spec["jobs"] else (1280, 720)
     out = run_unreal(lab, lambda L: uerun.render_cmd(L.engine_dir, L.proj(), map_path, jp, sm6=L.settings["sm6"],
                                                      resolution=(min(res_px[0], 1920), min(res_px[1], 1080))),
-                     "render_%s_%s" % (project.ue_name(name), tag), lab.out / "logs", timeout=timeout, done_file=str(rep) + ".done")
+                     "render_%s_%s" % (project.ue_name(name), tag), lab.out / "logs", timeout=timeout, done_file=str(rep) + ".done",
+                     watch=[d])
     report = json.loads(rep.read_text()) if rep.exists() else {"jobs": [], "error": "no render report"}
     stills = []
     for j in spec["jobs"]:
