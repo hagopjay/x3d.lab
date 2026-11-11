@@ -7,6 +7,7 @@
 # 2. **Import** one or more bake variants (`studio`, `neon`, `gilded`) into Unreal. The shader's four point lights become real lights.
 # 3. **Rounds.** Every *grade* (bloom, exposure, lens, depth of field, light scale) × every viewpoint renders in **one** Unreal start. Each still is scored against the reference (**SSIM**, **lit F** = which pixels light up, **Δ** colour) and laid out on a contact sheet. The next round tries the neighbours of the look you pick: brighter or darker, more or less bloom, stronger or weaker lights. The *fidelity* grade gets its exposure fitted to the reference automatically.
 # 4. **Hero:** the chosen look at full resolution and samples, saved to Drive with its exact settings.
+# 5. **Everywhere** (section 9): X_ITE's look baked into one glb and rendered by Unreal (extreme: 8K, 256 samples, Lumen at full quality), Blender Cycles and Babylon.js (WebGPU), side by side with the reference, with every engine's GPU use charted. Sections 5–7 can be skipped to go straight there.
 #
 # Scores go to `DRIVE_DIR/gobbler/scoreboard.jsonl` (one line per still: round, bake, grade, viewpoint, scores, GPU, settings), so rounds on different runtimes add up. **Fidelity** asks how close Unreal gets to the shader; **cinematic** is your eye on the contact sheet.
 #
@@ -246,10 +247,11 @@ for b in BAKES_ROUND:
         if GOB_DRIVE.exists():
             with open(sb, "a") as f:
                 f.write(json.dumps(line, default=str) + "\n")
-    fid = [SCORES[k]["ev_fit"] for k in SCORES if k[0] == ROUND and k[1] == b and k[2] == "fidelity"]
-    if fid:
-        EV["fidelity"] = round(EV.get("fidelity", 0.0) + sum(fid) / len(fid), 2)
-        print("fidelity exposure fitted to the reference: %+.2f EV" % EV["fidelity"])
+
+fid = [SCORES[k]["ev_fit"] for k in SCORES if k[0] == ROUND and k[2] == "fidelity"]   # one fit per round: all bakes averaged
+if fid:
+    EV["fidelity"] = round(EV.get("fidelity", 0.0) + sum(fid) / len(fid), 2)
+    print("fidelity exposure fitted to the reference: %+.2f EV" % EV["fidelity"])
 cols = ["reference"] + list(grades)
 sheet = gobbler.contact_sheet(rows_sheet, cols, WORK / "out" / "gobbler" / ("round_%02d.png" % ROUND), cell_w=400, scores=scores_sheet)
 display(IPImage(filename=sheet))
@@ -312,10 +314,170 @@ for (gname, vp), png in HERO["stills"].items():
 CARD["hero"] = {"bake": hero[0], "grade": hero[1], "settings": g, "stills": {vp: p for (gn, vp), p in HERO["stills"].items()}}
 
 # %% [markdown]
-# ## 8 · Save the run
+# ## 9 · The Gobbler everywhere: X_ITE's look in Unreal, Blender and Babylon.js
+#
+# The rounds above use a bake that keeps the shaders' *data* (for custom materials later), so every engine draws flat placeholder materials. This section bakes what X_ITE's shaders actually *draw* into ordinary textures (`gobbler.write_glb_xite`):
+#
+# - the FacetShader's colour for every facet;
+# - the EyeShader's iris and rings;
+# - the LineShader and PointShader core colours;
+# - a near-black sky and faint membranes.
+#
+# One glb, no custom shader, in three renderers, side by side with the reference:
+#
+# - **Unreal**, *extreme*: 8K by default, 256 samples, Lumen at its highest quality, bloom. A quick 720p still first fits the exposure to the reference.
+# - **Blender Cycles** on the GPU, AgX colour, with bloom added in post.
+# - **Babylon.js** in headless Chrome on the GPU: WebGPU when Chrome offers it, WebGL2 otherwise. Glow layer on the ribbons and stars, bloom, ACES, 8× MSAA, and the exposure fitted to the reference. It ends with a stress loop that shows the GPU at full frame rate.
+#
+# Every engine's GPU use is sampled while it renders: one chart and one table at the end.
+#
+# Sandbox check at 480×270, CPU only, against the reference: Cycles scored SSIM 0.75–0.77 and lit F 0.93–0.98; Babylon (WebGL2 on SwiftShader) scored SSIM 0.70–0.73 and lit F 0.94–0.98. The flat placeholder bake in Unreal had scored SSIM 0.26–0.46.
 
 # %%
-#@title 8 · Run card and shader cache to Drive { display-mode: "form" }
+#@title 9a · Bake X_ITE's look into one glb { display-mode: "form" }
+EVERY_VIEWS = "EyeToEye, Flywheel, Colossus, Crown"  #@param {type:"string"}
+STAGE = "everywhere-bake"
+EV_DIR = WORK / "out" / "gobbler" / "everywhere"
+EV_DIR.mkdir(parents=True, exist_ok=True)
+from x3due import everywhere
+importlib.reload(everywhere)
+XGLB = gobbler.write_glb_xite(BAKE, EV_DIR / "gobbler3_xite.glb")
+print("glb %.1f MB · %d triangles · textures %s · facets %d, ribbons %d, points %d" % (
+    XGLB["bytes"] / 2**20, XGLB["triangles"], XGLB["textures"], XGLB["facets"], XGLB["ribbons"], XGLB["points"]))
+EVIEWS = [v for v in _names(EVERY_VIEWS) if v in BAKE["viewpoints"]]
+for vp in EVIEWS:
+    if vp not in REFS:
+        REFS[vp] = gobbler.preview(BAKE, vp, RW, RH)
+        REF_PNG[vp] = gobbler.to_png(REFS[vp], WORK / "out" / "gobbler" / "ref" / ("ref_%s_%dx%d.png" % (vp, RW, RH)))
+VMAP = everywhere.views(BAKE, EVIEWS)
+EVERY = {"views": EVIEWS, "engines": {}}
+
+# %%
+#@title 9b · Unreal, extreme { display-mode: "form" }
+UNREAL_RES = "7680x4320"  #@param ["1920x1080", "3840x2160", "7680x4320"]
+UNREAL_SAMPLES = 256  #@param {type:"integer"}
+STAGE = "everywhere-unreal"
+if LAB and UP["ok"]:
+    man = gobbler.manifest_for(BAKE, X3D_MANIFEST)
+    imp = pipeline.import_scene(LAB, "gob_xite", XGLB["path"], "gltf", man, shape_centres=man["shape_centres"])
+    print("import %s · %.0f s" % ("ok" if imp["report"].get("ok") else "FAILED", imp["seconds"]))
+    base_cvars = dict(PLAN["ladder"]["high"]["cvars"])
+    calib_rung = {"resolution": [RW, RH], "spatial_samples": 8, "temporal_samples": 1, "renderer": "lumen", "tiles": 1, "warmup_frames": 16,
+                  "texture_streaming": "fully_load", "cvars": base_cvars}
+    c = pipeline.render_grades(LAB, "gob_xite", EVIEWS[:2], "calib", calib_rung, {"extreme": gobbler.with_exposure(gobbler.GRADES["extreme"], 0.0)},
+                               label="calib")
+    fits = [gobbler.exposure_fit(gobbler.resize_like(png, REFS[vp].shape), REFS[vp]) for (g, vp), png in c["stills"].items() if png]
+    UE_EV = round(sum(fits) / len(fits), 2) if fits else 0.0
+    print("Unreal exposure fitted to the reference: %+.2f EV" % UE_EV)
+    UW, UH = _res(UNREAL_RES)
+    xrung = {"resolution": [UW, UH], "spatial_samples": int(UNREAL_SAMPLES), "temporal_samples": 1, "renderer": "lumen", "tiles": 1,
+             "warmup_frames": 64, "texture_streaming": "fully_load", "cvars": base_cvars}
+    UE_X = pipeline.render_grades(LAB, "gob_xite", EVIEWS, "extreme", xrung, {"extreme": gobbler.with_exposure(gobbler.GRADES["extreme"], UE_EV)},
+                                  label="extreme")
+    EVERY["engines"]["Unreal"] = {"stills": {vp: png for (g, vp), png in UE_X["stills"].items()}, "seconds": UE_X["seconds"],
+                                  "gpu": UE_X.get("gpu") or {}, "gpu_series": UE_X.get("gpu_series") or [],
+                                  "detail": "UE %s · Lumen · %dx%d · %d spp · EV %+.2f" % (ENGINE.get("version"), UW, UH, UNREAL_SAMPLES, UE_EV)}
+    g = UE_X.get("gpu") or {}
+    print("Unreal extreme: %d stills in %.0f s · GPU peak %s%%, mean %s%% · VRAM peak %.1f GB" % (
+        sum(1 for p in UE_X["stills"].values() if p), UE_X["seconds"], g.get("peak_util", "?"), g.get("mean_util", "?"), (g.get("peak_mem_mb") or 0) / 1024))
+else:
+    print("Unreal is not up (step 3): skipped")
+
+# %%
+#@title 9c · Blender Cycles { display-mode: "form" }
+CYCLES_RES = "3840x2160"  #@param ["1920x1080", "3840x2160"]
+CYCLES_SAMPLES = 512  #@param {type:"integer"}
+STAGE = "everywhere-cycles"
+try:
+    from x3dlab import blender as xblender
+    if "BL" not in globals() or BL is None:
+        BL = xblender.setup()
+    print("Blender %s · Cycles backend %s" % (BL.version, BL.best_backend))
+    CW, CH = _res(CYCLES_RES)
+    CY = everywhere.cycles(BL.cmd, XGLB["path"], VMAP, EV_DIR / "cycles", res=(CW, CH), samples=int(CYCLES_SAMPLES),
+                           device="CPU" if BL.best_backend == "CPU" else "GPU", backend=BL.best_backend if BL.best_backend != "CPU" else None,
+                           lights=everywhere.studio_lights(BAKE))
+    print("Cycles on %s: %d stills in %.0f s · GPU peak %s%%, mean %s%%" % (CY["report"].get("device"), sum(1 for p in CY["stills"].values() if p),
+          CY["seconds"], CY["gpu"].get("peak_util", "?"), CY["gpu"].get("mean_util", "?")))
+    for e in CY["report"].get("errors", [])[:3]:
+        print("  note:", e)
+    EVERY["engines"]["Cycles"] = {"stills": CY["stills"], "seconds": CY["seconds"], "gpu": CY["gpu"], "gpu_series": CY["gpu_series"],
+                                  "detail": "Blender %s · %s · %dx%d · %d spp · AgX + bloom" % (CY["report"].get("blender"), CY["report"].get("device"),
+                                                                                             CW, CH, CYCLES_SAMPLES)}
+    if VISUAL:
+        for vp, png in list(CY["stills"].items())[:2]:
+            if png:
+                display(IPImage(filename=png, width=720))
+except Exception as exc:
+    print("❌ Cycles: %s" % exc)
+
+# %%
+#@title 9d · Babylon.js (WebGPU) { display-mode: "form" }
+BABYLON_RES = "3840x2160"  #@param ["1920x1080", "3840x2160"]
+STRESS_FRAMES = 600  #@param {type:"integer"}
+STAGE = "everywhere-babylon"
+try:
+    BW, BH = _res(BABYLON_RES)
+    BJ = everywhere.babylon(XGLB["path"], VMAP, EV_DIR / "babylon", res=(BW, BH), lights=everywhere.studio_lights(BAKE),
+                            stress_frames=int(STRESS_FRAMES), references={vp: REFS[vp] for vp in EVIEWS[:2]}, vendor_dir=WORK / "vendor" / "babylon")
+    info = BJ["info"]
+    print("Babylon on %s · %s · %d stills in %.0f s · GPU peak %s%%, mean %s%%%s" % (
+        info.get("kind"), info.get("adapter") or info.get("renderer"), len(BJ["stills"]), BJ["seconds"], BJ["gpu"].get("peak_util", "?"),
+        BJ["gpu"].get("mean_util", "?"), " · stress %.0f fps at %dx%d" % (BJ["stress"]["fps"], BW, BH) if BJ.get("stress") else ""))
+    for c_ in BJ["console"][:3]:
+        print("  console:", c_)
+    EVERY["engines"]["Babylon"] = {"stills": BJ["stills"], "seconds": BJ["seconds"], "gpu": BJ["gpu"], "gpu_series": BJ["gpu_series"],
+                                   "detail": "Babylon.js %s · %s · %dx%d · glow, bloom, ACES, MSAA 8" % (everywhere.BABYLON_VERSION, info.get("kind"), BW, BH)}
+    if VISUAL:
+        for vp, png in list(BJ["stills"].items())[:2]:
+            display(IPImage(filename=png, width=720))
+except Exception as exc:
+    print("❌ Babylon: %s" % exc)
+
+# %%
+#@title 9e · Side by side, scores, GPU { display-mode: "form" }
+STAGE = "everywhere-compare"
+cols = ["X_ITE look (reference)"] + list(EVERY["engines"])
+rows, scores = {}, {}
+for vp in EVIEWS:
+    rows[vp] = {"X_ITE look (reference)": str(REF_PNG[vp])}
+    for eng, e in EVERY["engines"].items():
+        png = e["stills"].get(vp)
+        rows[vp][eng] = png
+        if png:
+            scores[(vp, eng)] = gobbler.score(gobbler.resize_like(png, REFS[vp].shape), REFS[vp])
+EV_SHEET = gobbler.contact_sheet(rows, cols, EV_DIR / "everywhere.png", cell_w=480, scores=scores)
+display(IPImage(filename=EV_SHEET))
+chart = everywhere.gpu_chart({k: e["gpu_series"] for k, e in EVERY["engines"].items()}, EV_DIR / "gpu.png")
+if chart:
+    display(IPImage(filename=chart))
+lines = ["| engine | how | time | GPU peak | GPU mean | VRAM peak | SSIM | lit F | Δ |", "|---|---|---|---|---|---|---|---|---|"]
+for eng, e in EVERY["engines"].items():
+    sc = [scores[(vp, eng)] for vp in EVIEWS if (vp, eng) in scores]
+    m = lambda k: sum(x[k] for x in sc) / len(sc) if sc else float("nan")
+    g = e["gpu"] or {}
+    lines.append("| %s | %s | %.0f s | %s%% | %s%% | %.1f GB | %.3f | %.3f | %.0f |" % (
+        eng, e["detail"], e["seconds"], g.get("peak_util", "?"), g.get("mean_util", "?"), (g.get("peak_mem_mb") or 0) / 1024, m("ssim"), m("lit_f"),
+        m("colour_delta")))
+display(HTML("<div style='font-size:13px'>" + "<br>".join(lines).replace("|", " | ") + "</div>"))
+print("\n".join(lines))
+CARD["everywhere"] = {"glb": {k: v for k, v in XGLB.items() if k != "eye_box"}, "engines": {k: {x: e[x] for x in ("detail", "seconds", "gpu")}
+                      for k, e in EVERY["engines"].items()}, "scores": {"%s|%s" % k: v for k, v in scores.items()}}
+if GOB_DRIVE.exists():
+    import shutil
+    dst = GOB_DRIVE / "everywhere" / time.strftime("%Y%m%d-%H%M%S")
+    dst.mkdir(parents=True, exist_ok=True)
+    for f in [EV_SHEET, chart, XGLB["path"]] + [p for e in EVERY["engines"].values() for p in e["stills"].values() if p]:
+        if f and Path(f).exists():
+            shutil.copy(f, dst / Path(f).name)
+    (dst / "everywhere.json").write_text(json.dumps(CARD["everywhere"], indent=1, default=str))
+    print("saved to", dst)
+
+# %% [markdown]
+# ## 10 · Save the run
+
+# %%
+#@title 10 · Run card and shader cache to Drive { display-mode: "form" }
 STAGE = "save"
 RUN_ID = time.strftime("%Y%m%d-%H%M%S")
 CARD.update(run_id=RUN_ID, attempts=LAB.attempts if LAB else [], ev=EV)

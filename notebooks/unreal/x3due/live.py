@@ -82,6 +82,7 @@ class Live:
 
     def _reset(self, label, watch):
         self.label, self.watch = label, [Path(w) for w in watch]
+        self.running = True
         self.t0 = time.time()
         self.last_tick = 0.0
         self.count = {k: 0 for k, *_ in KINDS}
@@ -187,6 +188,7 @@ class Live:
         return ""
 
     def end(self, res: dict):
+        self.running = False
         if self.visual:
             self._new_images()
         if self.verbose:
