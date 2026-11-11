@@ -51,7 +51,12 @@ CRASH = [  # (signature, regex, advice)
     ("oom_host", re.compile(r"Ran out of memory|Out of memory|\bOOM\b|std::bad_alloc", re.I), "out of RAM: fewer shader workers, High-RAM runtime"),
     ("no_display", re.compile(r"No available video device|SDL_Init failed|Could not initialize SDL|cannot open display", re.I),
      "SDL wants a display: retry with SDL_VIDEODRIVER=offscreen, then under Xvfb"),
-    ("shader_format", re.compile(r"ShaderFormatVersion|Unable to find shader format|No target platform (?:supports|for) shader format", re.I),
+    # Not the bare word "ShaderFormatVersion" (healthy shader-compile and DDC lines carry it; only the crash's stack
+    # frame counts), and not Unreal's
+    # "Unable to find shader format X from hinted modules, loading all potential format modules" (a lookup, not a
+    # failure): both made clean A100 runs WARN and sent step 8 down the Shader Model 5 retry (11 Nov 2026).
+    ("shader_format", re.compile(r"Unable to find shader format(?!.*from hinted modules)|No target platform (?:supports|for) shader format|"
+                                 r"TargetPlatformManagerModule::ShaderFormatVersion", re.I),   # the UE 5.2 SM6 segfault's stack frame
      "this engine has no shader format for the targeted platform (seen: UE 5.2 asked for SF_VULKAN_SM6): retry with Shader Model 5 and no ray tracing"),
     ("assert", re.compile(r"Assertion failed:|appError called:|Fatal error!?|Unhandled Exception|Caught signal", re.I),
      "engine crash: see the lines below and the crash folder under Saved/Crashes"),

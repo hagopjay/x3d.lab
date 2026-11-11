@@ -213,9 +213,21 @@ def apply_change(lab: Lab, change: dict) -> None:
     lab.write_project()
 
 
+def restore_settings(lab: Lab, saved: dict) -> None:
+    """Put lab.settings back to `saved`, including the engine's Vulkan ray-tracing config and the project files."""
+    rt_was, rt_now = saved.get("ray_tracing"), lab.settings.get("ray_tracing")
+    lab.settings.clear()
+    lab.settings.update(json.loads(json.dumps(saved)))
+    if rt_was and not rt_now:
+        E.enable_vulkan_rt(lab.engine_dir, lab.settings.get("bindless", "RayTracingOnly"))
+    lab.write_project()
+
+
 def run_unreal(lab: Lab, make_cmd, label, log_dir, timeout=7200, done_file=None, max_attempts=4, need_render=True) -> dict:
     """make_cmd(lab) -> argv. Runs, reads the log, retries along uerun.RETRY. Returns the last attempt plus the list."""
     tried, attempts = [], []
+    before = json.loads(json.dumps(lab.settings))      # a change that doesn't help is rolled back (see below)
+    ok = False
     for k in range(max_attempts):
         cmd = make_cmd(lab)
         if lab.settings["xvfb"]:
@@ -244,6 +256,11 @@ def run_unreal(lab: Lab, make_cmd, label, log_dir, timeout=7200, done_file=None,
         lab.log("%s failed (%s); retrying with: %s" % (label, ", ".join(c["signature"] for c in proof["crashes"]) or proof.get("why"), lbl))
         tried.append(lbl)
         apply_change(lab, change)
+    if not ok and tried and lab.settings != before:
+        # Every retry failed: put the settings back, so one failing job (11 Nov: a USD import with no USD plugin)
+        # doesn't leave every later import and render on Shader Model 5 without ray tracing.
+        restore_settings(lab, before)
+        lab.log("%s: none of the retries helped (%s); settings restored" % (label, ", ".join(tried)))
     last = dict(attempts[-1])
     last["attempts"] = [{x: a.get(x) for x in ("rc", "seconds", "killed", "change", "attempt")} for a in attempts]
     last["excerpt"] = uerun.excerpt(Path(last["log"]).read_text(errors="replace")) if Path(last["log"]).exists() else ""
@@ -283,6 +300,9 @@ def import_scene(lab: Lab, name, source, kind, manifest, shape_centres=None, tim
     job = project.import_job(name if kind == "gltf" else name + "_usd", source, kind, manifest, rep_path, HERE.parent,
                              mapping=lab.mapping, shape_centres=shape_centres)
     jp = uerun.write_json(d / ("import_job%s.json" % ("_usd" if kind == "usd" else "")), job)
+    # A rerun of step 8 found the map and the sequence from the first run, could not create them again, and reported
+    # 0 sequences. Unreal is not running between jobs, so removing the scene's own folder is safe; Shared stays.
+    shutil.rmtree(lab.project_dir / "Content" / "X3DLab" / job["scene"], ignore_errors=True)
     lab.own()
     script = lab.project_dir / "Content" / "Python" / "x3dlab_import.py"
     shutil.copy(project.UE_SCRIPTS / "x3dlab_import.py", script)

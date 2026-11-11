@@ -118,9 +118,11 @@ def detect(smi_query: str | None = None, smi_header: str | None = None, meminfo_
 
 # ---------------------------------------------------------------------- ladders
 def shader_workers(cpus: int, ram_gb: float) -> int:
-    """Shader-compile workers that fit: the editor keeps ~10 GB, each ShaderCompileWorker takes ~2 GB at peak
-    (rule of thumb, unverified). Never more than cpus - 1."""
-    by_ram = int(max(0.0, ram_gb - 10) // 2)
+    """Shader-compile workers that fit: the editor keeps ~4 GB, each ShaderCompileWorker takes ~2 GB at peak.
+    Measured 11 Nov 2026 on a 12 GB L4 during the cold start: editor 2.0 GB RSS, worker 1.4 GB, 7 GB still free with
+    one worker. The old 10 GB reserve gave that machine 1 worker and a many-hour start; this gives it 4.
+    Never more than cpus - 1."""
+    by_ram = int(max(0.0, ram_gb - 4) // 2)
     return max(1, min(max(1, cpus - 1), by_ram if by_ram else 1))
 
 
