@@ -2,7 +2,9 @@
 
 **07 Unreal Fidelity** ([open in Colab](https://colab.research.google.com/github/hagopjay/x3d.lab/blob/main/notebooks/unreal/07_Unreal_Fidelity.ipynb)) brings X3D scenes into Unreal Engine 5, renders the highest-fidelity stills the Colab GPU allows, and measures what arrived and how it compares with X_ITE and Blender Cycles. Streaming is out of scope here; [DESIGN.md](DESIGN.md) covers the later phases (the Gobbler's kinetics, GLSL shaders, viewing it worldwide).
 
-Status: **untested on a real GPU and a real Unreal**. Everything that can run without them was tested in a sandbox (see the PR). The first Colab run is the live test; the notebook explains every failure from Unreal's own log.
+**08 Gobbler Cinematic** ([open in Colab](https://colab.research.google.com/github/hagopjay/x3d.lab/blob/main/notebooks/unreal/08_Gobbler_Cinematic.ipynb)) is the Gobbler sprint. It bakes the Gobbler's shader-encoded geometry (`x3due/gobbler.py`) into a glb Unreal can draw, draws a CPU reference from the same decode (it matches X_ITE at SSIM 0.91–1.0), then runs rounds: every grade (bloom, exposure, lens, depth of field, light scale) × every viewpoint in one Unreal start, scored against the reference and laid out on a contact sheet. You pick a look; the next round tries its neighbours; the hero cell renders the winner at 4K/8K. Scores add up across runtimes in `DRIVE_DIR/gobbler/scoreboard.jsonl`.
+
+Status: first live runs on Colab L4 and A100 (11 Nov 2026). The engine starts, imports and renders; fixes from those runs: the Nanite streaming pool stays under Vulkan's 2 GB allocation (the A100 crash), all samples are spatial (temporal ones did not accumulate with no motion blur), the Zen shader cache goes to Drive, OpenImageDenoise replaces NNEDenoiser, a Drive heartbeat, and step 6c for any start-up crash. The notebooks explain every failure from Unreal's own log.
 
 ## Which GPU
 

@@ -89,3 +89,41 @@ def test_render_executor_flow(tmp_path):
     assert (tmp_path / "render_report.json.done").exists()
     assert "executor finished" in unreal_stub.LOG
     assert len(unreal_stub.STATE["pipelines"]) == 2                              # a fresh pipeline (and world) per still
+
+
+def test_render_applies_a_grade(tmp_path):
+    unreal_stub.install()
+    rung = {"resolution": [1280, 720], "spatial_samples": 8, "temporal_samples": 1, "renderer": "lumen", "cvars": {"r.DepthOfFieldQuality": 0}}
+    grade = {"post": {"bloom_intensity": 1.2, "auto_exposure_bias": -1.5, "auto_exposure_method": "AEM_MANUAL"}, "light_scale": 2.0,
+             "headlight": False, "cvars": {"r.DepthOfFieldQuality": 2}}
+    spec = project.render_jobs("gob", ["Front"], "high", rung, tmp_path / "stills", tmp_path / "rr.json", grade=grade, tag="glow2")
+    j = spec["jobs"][0]
+    assert j["name"] == "gob__Front__high__glow2" and j["cvars"]["r.DepthOfFieldQuality"] == 2 and "cvars" not in j["grade"]
+    jp = tmp_path / "rj.json"
+    jp.write_text(json.dumps(spec))
+    unreal_stub.STATE["cmdline"] = "UnrealEditor X.uproject -game -X3DLabJob=%s" % jp
+    vol = unreal_stub.Actor("PostProcessVolume")
+    vol.set_editor_property("tags", ["x3dlab_look", "x3dlab_look_cinematic"])
+    light = unreal_stub.Actor("PointLight")
+    light.set_editor_property("tags", ["x3dlab_light"])
+    head = unreal_stub.Actor("DirectionalLight")
+    head.set_editor_property("tags", ["x3dlab_headlight", "x3dlab_headlight_Front"])
+    unreal_stub.STATE["actors"] += [vol, light, head]
+    mod = _run_script(RENDER, "x3dlab_render")
+    ex = mod.X3DLabExecutor()
+    ex.execute_delayed(None)
+    ex.on_map_load(None)
+    s = vol.get_editor_property("settings")
+    assert s.get_editor_property("bloom_intensity") == 1.2 and s.get_editor_property("override_bloom_intensity") is True
+    assert s.get_editor_property("auto_exposure_bias") == -1.5
+    applied = mod.STATE["report"]["grade_applied"]
+    assert applied["post"] == ["auto_exposure_bias", "auto_exposure_method", "bloom_intensity"] and applied["headlight"] is False
+
+
+def test_grade_is_validated():
+    import pytest
+    rung = {"resolution": [64, 64], "spatial_samples": 1, "temporal_samples": 1, "renderer": "lumen", "cvars": {}}
+    for bad in ({"post": {"override_bloom_intensity": True}}, {"post": {"bloom_intensity": float("nan")}}, {"lights": 2},
+                {"cvars": {"r.X; quit": 1}}):
+        with pytest.raises(AssertionError):
+            project.render_jobs("g", ["A"], "high", rung, "/tmp/o", "/tmp/r.json", grade=bad)

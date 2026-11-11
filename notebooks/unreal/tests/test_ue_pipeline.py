@@ -137,3 +137,17 @@ def test_calibration_rejects_saturation(tmp_path):
     Image.new("RGB", (64, 36), (255, 255, 255)).save(p)
     c = pipeline.calibration(p, 1.2)
     assert c["saturated"] and not c["use"]
+
+
+def test_render_grades_runs_every_grade_in_one_start(tmp_path):
+    fake = FakeUnreal()
+    lab, drive = make_lab(tmp_path, fake)
+    pipeline.get_engine(lab, "zip", drive)
+    lab.write_project()
+    rung = {"resolution": [320, 180], "spatial_samples": 4, "temporal_samples": 1, "renderer": "lumen", "cvars": {}}
+    grades = {"glow": {"post": {"bloom_intensity": 1.0}}, "film": {"post": {"vignette_intensity": 0.4}, "headlight": False}}
+    out = pipeline.render_grades(lab, "gob", ["EyeToEye", "Crown"], "round", rung, grades, label="r1")
+    assert len(fake.calls) == 1 and len(out["spec"]["jobs"]) == 4
+    assert set(out["stills"]) == {("glow", "EyeToEye"), ("glow", "Crown"), ("film", "EyeToEye"), ("film", "Crown")}
+    assert all(p and p.endswith(".png") for p in out["stills"].values())
+    assert {j["name"] for j in out["spec"]["jobs"]} >= {"gob__EyeToEye__round__glow", "gob__Crown__round__film"}

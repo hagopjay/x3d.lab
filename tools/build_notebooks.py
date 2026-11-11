@@ -21,7 +21,8 @@ NAMES = {"00_starter.py": ("00_MCP_Starter.ipynb", None), "00_basic_mcp.py": ("0
          "04_duel.py": ("04_Model_Duel.ipynb", None), "05_hog.py": ("05_GPU_Hog.ipynb", "GPU"),
          "00_gpu_playground.py": ("00_GPU_Browser_Playground.ipynb", "GPU"),
          "06_foundry.py": ("06_Foundry.ipynb", None),
-         "07_unreal.py": ("unreal/07_Unreal_Fidelity.ipynb", "GPU")}   # name -> (output under notebooks/, accelerator)
+         "07_unreal.py": ("unreal/07_Unreal_Fidelity.ipynb", "GPU"),
+         "08_gobbler.py": ("unreal/08_Gobbler_Cinematic.ipynb", "GPU")}   # name -> (output under notebooks/, accelerator)
 UNREAL_SRC = ROOT / "notebooks" / "unreal" / "src"   # the Unreal leg keeps its sources next to its own files
 
 
