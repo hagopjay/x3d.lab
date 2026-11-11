@@ -143,6 +143,7 @@ class DuelConfig:
     parallel: int = 4                      # scenes in flight at once (NVIDIA is also paced to its per-minute limit)
     max_requests: int = 200                # refuse to start if the worst case needs more model requests than this
     name: str = ""
+    rules: dict = field(default_factory=dict)   # extra system-prompt lines: key "*", a provider, or a contender spec/label
 
     def prompt_list(self) -> list[dict]:
         p = self.prompts
@@ -151,7 +152,8 @@ class DuelConfig:
         out = []
         for i, x in enumerate(p or []):
             if isinstance(x, dict):
-                out.append({"id": str(x.get("id") or "p%d" % (i + 1)), "trap": x.get("trap", ""), "text": str(x["text"])})
+                out.append({"id": str(x.get("id") or "p%d" % (i + 1)), "trap": x.get("trap", ""), "text": str(x["text"]),
+                            **({"focus": x["focus"]} if x.get("focus") else {})})
             elif x in BY_PROMPT:
                 out.append(dict(BY_PROMPT[x]))
             else:
@@ -253,8 +255,8 @@ def resolve(cfg: DuelConfig) -> tuple[list[Contender], dict]:
     out, skipped, seen = [], {}, set()
     for spec in cfg.contenders:
         provider, model = parse_contender(spec)
-        if provider == "sample":
-            c = Contender(spec, "sample", "built-in defects", "sample")
+        if provider in OFFLINE:
+            c = Contender(spec, provider, OFFLINE[provider][0], provider)
         else:
             try:
                 provider, key, model = keys.pick(provider, model)
@@ -276,7 +278,7 @@ def resolve(cfg: DuelConfig) -> tuple[list[Contender], dict]:
 def estimate(cfg: DuelConfig) -> dict:
     """Worst-case model requests (every draft fails and uses every repair round). Nothing is sent."""
     n_prompts = len(cfg.prompt_list())
-    paid = [s for s in cfg.contenders if parse_contender(s)[0] != "sample"]
+    paid = [s for s in cfg.contenders if parse_contender(s)[0] not in OFFLINE]
     per_scene = 1 + max(0, int(cfg.rounds))
     worst = len(paid) * n_prompts * per_scene
     nv = sum(1 for s in paid if parse_contender(s)[0] == "nvidia") * n_prompts * per_scene
@@ -303,10 +305,18 @@ class _SampleConversation:
         return llm.Reply(xml, [], {"input": 0, "output": 0}, "built-in", "stop")
 
 
-def _conversation(c: Contender, cfg: DuelConfig, index: int):
-    if c.provider == "sample":
-        return _SampleConversation(SAMPLE_DEFECTS[index % len(SAMPLE_DEFECTS)])
+# Contenders that need no key or network: provider -> (description, factory(cfg, index, prompt) -> conversation).
+# The Foundry adds "corpus" (known-good scenes for the focus node, some with a defect) so a round runs offline.
+OFFLINE = {"sample": ("built-in defects", lambda cfg, index, prompt: _SampleConversation(SAMPLE_DEFECTS[index % len(SAMPLE_DEFECTS)]))}
+
+
+def _conversation(c: Contender, cfg: DuelConfig, index: int, prompt: dict | None = None):
+    if c.provider in OFFLINE:
+        return OFFLINE[c.provider][1](cfg, index, prompt or {})
     system = (SYSTEM if cfg.system == "coached" else BARE_SYSTEM).format(version=cfg.version)
+    extra = [cfg.rules.get(k) for k in ("*", c.provider, c.spec, c.label) if cfg.rules.get(k)]
+    if extra:
+        system += "\n\nLessons from earlier rounds (mistakes you made before; do not repeat them):\n" + "\n".join(extra)
     return llm.conversation(c.provider, c.key, c.model, system=system)
 
 
@@ -334,7 +344,7 @@ async def _one(client, run: DuelRun, c: Contender, prompt: dict, index: int, sem
 
     async with sem:
         try:
-            conv = _conversation(c, cfg, index)
+            conv = _conversation(c, cfg, index, prompt)
             xml = await ask(conv, prompt["text"])
             (folder / ("%s.draft.x3d" % prompt["id"])).write_text(xml, encoding="utf-8")
             a.files["draft"] = "scenes/%s/%s.draft.x3d" % (_slug(c.label), prompt["id"])

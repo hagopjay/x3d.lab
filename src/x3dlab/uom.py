@@ -123,9 +123,12 @@ def find_uom_file(version: str = "4.0") -> Path:
 def profile_nodes(profile: str = "Interchange", version: str = "4.0") -> set:
     """Element names a profile allows, from the X3D-Edit profile file next to the X3DUOM (empty if not found)."""
     p = find_uom_file(version).parent / ("x3d-%s.profile.xml" % version)
+    if not p.exists():                                       # x3d_mcp ships the 4.0 file only; 4.1 kept the profiles
+        p = find_uom_file("4.0").parent / "x3d-4.0.profile.xml"
     if not p.exists():
         return set()
-    m = re.search(r'<!ENTITY %sProfileNodesLabel "([^"]*)"' % re.escape(profile), p.read_text(encoding="utf-8", errors="replace"))
+    # the file pads some names ('ImmersiveProfileNodesLabel  "...'): any whitespace before the value
+    m = re.search(r'<!ENTITY\s+%sProfileNodesLabel\s+"([^"]*)"' % re.escape(profile), p.read_text(encoding="utf-8", errors="replace"))
     return set(m.group(1).split()) if m else set()
 
 

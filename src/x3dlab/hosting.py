@@ -163,6 +163,11 @@ class Lab:
         from . import hog
         return hog.run(self, cfg, **kw)
 
+    def foundry(self, cfg=None, **kw):
+        """One Foundry round: target, generate, referee, engines, claims, shrink, write, learn (blocking). See x3dlab.foundry."""
+        from . import foundry
+        return foundry.run(self, cfg, **kw)
+
     def duel(self, cfg=None, **kw):
         """Same prompts to several models; x3d_mcp scores every scene (blocking). See x3dlab.duel."""
         from . import duel
