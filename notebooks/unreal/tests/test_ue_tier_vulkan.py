@@ -78,7 +78,9 @@ def test_shader_workers_capped_by_ram():
     assert tier.shader_workers(2, 12.7) == 1
     assert tier.shader_workers(12, 167) == 11
     assert tier.shader_workers(8, 53) == 7
-    assert tier.shader_workers(8, 20) == 5
+    assert tier.shader_workers(8, 20) == 7
+    assert tier.shader_workers(8, 12) == 4      # the 12 GB L4 of 11 Nov: 4 workers, not 1
+    assert tier.shader_workers(8, 5) == 1
 
 
 def test_capability_table_rows():

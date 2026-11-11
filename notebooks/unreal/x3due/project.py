@@ -41,6 +41,8 @@ def write(dest, engine_dir=None, plan=None, ray_tracing=False, usd=False, cpus=4
         for sub in ("Config", "Content/Python"):
             shutil.rmtree(dest / sub, ignore_errors=True)
     shutil.copytree(TEMPLATE, dest, dirs_exist_ok=True)
+    for script in UE_SCRIPTS.glob("*.py"):              # the import script lives outside the template; a rewrite must keep it
+        shutil.copy(script, dest / "Content" / "Python" / script.name)
     have = {}
     for p in REQUIRED_PLUGINS + OPTIONAL_PLUGINS:
         have[p] = bool(list(Path(engine_dir, "Engine", "Plugins").glob("**/%s.uplugin" % p))) if engine_dir else None

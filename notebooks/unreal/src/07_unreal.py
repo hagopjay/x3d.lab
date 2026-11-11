@@ -114,7 +114,7 @@ if importlib.util.find_spec("x3dlab") is None:
 if str(LAB_DIR / "src") not in sys.path:
     sys.path.insert(1, str(LAB_DIR / "src"))
 importlib.invalidate_caches()
-from x3due import (compare, convert, engine, engines, gltfstat, pipeline, project, report, showcase, tier, uerun, vulkan,
+from x3due import (compare, convert, engine, engines, gltfstat, pipeline, project, report, showcase, tier, staging, uerun, vulkan,
                    x3dscene)
 SC = report.Scorecard()
 CARD = {"notebook": "07_Unreal_Fidelity", "lab_commit": sh("git -C %s rev-parse --short HEAD" % LAB_DIR), "options": {
@@ -290,6 +290,7 @@ if ENGINE.get("version") and CACHE_ENGINE and ENGINE["source"] != "drive cache" 
 if CACHE_DDC and Path(DRIVE_DIR).exists():
     CARD["ddc_restore"] = pipeline.ddc_restore(LAB, DRIVE_DIR)
     print("DDC:", CARD["ddc_restore"])
+LAB.settings["usd"] = USD == "auto"          # step 8 imports .usdc files: the USD Importer plugin must be on
 PROJ = LAB.write_project()
 print("project %s · plugins %s · %d shader workers" % (PROJ["project"], ", ".join(p["Name"] for p in PROJ["plugins"] if p["Enabled"]), PROJ["workers"]))
 if PROJ["missing_required"] and ENGINE.get("version"):
@@ -316,6 +317,11 @@ if ENGINE.get("version"):
             if a.get("change"):
                 print("%s start: retried with %s" % (k, a["change"]))
     CARD["smoke"] = {k: {x: v.get(x) for x in ("rc", "seconds", "killed", "proof", "gpu", "attempts", "timing")} for k, v in SMOKE.items()}
+    if CACHE_DDC and Path(DRIVE_DIR).exists() and SMOKE["cold"]["rc"] == 0 and SMOKE["cold"]["seconds"] > 120:
+        # The global shaders are the expensive part (17 min on an A100, hours on a small runtime): keep them now,
+        # not only at step 11, so a run that stops later still leaves a warm cache for the next one.
+        CARD["ddc_save_after_start"] = pipeline.ddc_save(LAB, DRIVE_DIR)
+        print("shader cache saved to Drive:", CARD["ddc_save_after_start"])
 else:
     SC.add("6 start", "RHI is Vulkan on the NVIDIA GPU", "SKIP", "no engine (step 5)")
 
@@ -347,8 +353,19 @@ for n in names:
         main = Path(f["main"])
         if e["kind"] == "x3d":
             xml, vp_names = x3dscene.ensure_viewpoint_defs(main.read_text(encoding="utf-8", errors="replace"))
+            xml, rec["freeze"] = staging.freeze(xml, e.get("freeze_at", "auto"))       # dark at time 0? freeze it lit
+            m0 = x3dscene.manifest(xml)
+            rec["framing"] = staging.frame_all(m0)
+            if staging.needs_auto(rec["framing"]) and m0.get("bounds"):                 # no authored viewpoint shows it
+                xml, _ = staging.add_auto_viewpoint(xml, m0["bounds"])
+                rec["framing"] = staging.frame_all(x3dscene.manifest(xml))
             main.write_text(xml, encoding="utf-8")
             rec["manifest"] = x3dscene.manifest(xml)
+            if rec["freeze"].get("fraction") is not None:
+                print("%s: %s (lights %.3g -> %.3g)" % (n, rec["freeze"]["why"], rec["freeze"]["lights_t0"], rec["freeze"]["lights_frozen"]))
+            bad = {k: v["verdict"] for k, v in rec["framing"].items() if v["verdict"] not in ("frames", "inside")}
+            if bad:
+                print("%s: viewpoints that don't show the model: %s%s" % (n, bad, " · added x3dlab_auto" if "x3dlab_auto" in rec["framing"] else ""))
             if BL is not None:
                 conv = engines.to_gltf(BL, main, main.with_suffix(".glb"))
                 rec["convert"] = {k: conv.get(k) for k in ("error", "counts", "shared_meshes", "flat_meshes", "losses", "export_s", "bytes")}
@@ -458,7 +475,7 @@ RND = {}
 for n, res in IMP.items():
     if n == "calib" or n.endswith("_usd") or not res["report"].get("ok"):
         continue
-    cams = sorted(res["report"]["sequences"])[:MAX_VIEWPOINTS]
+    cams = staging.pick(sorted(res["report"]["sequences"]), SCN.get(n, {}).get("framing", {}), MAX_VIEWPOINTS)
     out = pipeline.render(LAB, n, cams, rung_name, RUNG_USED, look=LOOK)
     RND[n] = out
     ok = [s for s in out["stills"] if s["png"] or s["exr"]]
