@@ -1,0 +1,16 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "",
+	"Category": "",
+	"Description": "x3d.lab: X3D scenes rendered headless with Unreal Engine (notebooks/unreal). The notebook rewrites the Plugins list from what the installed engine actually has.",
+	"Plugins": [
+		{"Name": "PythonScriptPlugin", "Enabled": true},
+		{"Name": "EditorScriptingUtilities", "Enabled": true},
+		{"Name": "SequencerScripting", "Enabled": true},
+		{"Name": "MovieRenderPipeline", "Enabled": true},
+		{"Name": "Interchange", "Enabled": true},
+		{"Name": "GLTFImporter", "Enabled": false},
+		{"Name": "USDImporter", "Enabled": false},
+		{"Name": "NNEDenoiser", "Enabled": false}
+	]
+}

@@ -20,7 +20,9 @@ NAMES = {"00_starter.py": ("00_MCP_Starter.ipynb", None), "00_basic_mcp.py": ("0
          "02_lab.py": ("02_Lab.ipynb", "GPU"), "03_research.py": ("03_Research.ipynb", "GPU"),
          "04_duel.py": ("04_Model_Duel.ipynb", None), "05_hog.py": ("05_GPU_Hog.ipynb", "GPU"),
          "00_gpu_playground.py": ("00_GPU_Browser_Playground.ipynb", "GPU"),
-         "06_foundry.py": ("06_Foundry.ipynb", None)}   # name -> (output, accelerator)
+         "06_foundry.py": ("06_Foundry.ipynb", None),
+         "07_unreal.py": ("unreal/07_Unreal_Fidelity.ipynb", "GPU")}   # name -> (output under notebooks/, accelerator)
+UNREAL_SRC = ROOT / "notebooks" / "unreal" / "src"   # the Unreal leg keeps its sources next to its own files
 
 
 COLLAPSED = "<!-- collapsed -->"   # put this line in a markdown cell under its heading to fold that section
@@ -75,7 +77,7 @@ def main() -> int:
     ap.add_argument("--check", action="store_true")
     a = ap.parse_args()
     stale = []
-    for src in sorted(SRC.glob("*.py")):
+    for src in sorted(SRC.glob("*.py")) + sorted(UNREAL_SRC.glob("*.py")):
         path, text = build(src)
         if a.check:
             if not path.exists() or path.read_text(encoding="utf-8") != text:
