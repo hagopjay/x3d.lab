@@ -362,7 +362,7 @@ def task_convert(t):
     elif fmt in ("usd", "usda", "usdc"):
         if not hasattr(bpy.ops.wm, "usd_export"):
             return dict(res, error="this Blender build has no USD exporter")
-        exp = bpy.ops.wm.usd_export(filepath=out, export_materials=True)
+        exp = _export_usd(out)
     else:
         return dict(res, error="unknown format %r" % fmt)
     res.update(export=sorted(exp), export_s=round(time.time() - t0, 3), output=out,
@@ -372,14 +372,64 @@ def task_convert(t):
         return res
     fresh()
     try:
-        back = bpy.ops.import_scene.gltf(filepath=out) if fmt in ("glb", "gltf") else bpy.ops.wm.usd_import(filepath=out)
+        back = _import_any(out)
         res["reimport"] = {"result": sorted(back), "counts": snapshot()["counts"], "shared_meshes": _shared_meshes()}
     except Exception as exc:
         res["reimport"] = {"error": str(exc)[:300]}
     return res
 
 
-KINDS = {"probe": task_probe, "roundtrip": task_roundtrip, "render": task_render, "import": task_import, "convert": task_convert}
+def _import_any(path):
+    """Import a glTF (.glb/.gltf), USD (.usd/.usda/.usdc/.usdz) or X3D file into the current scene."""
+    ext = os.path.splitext(path)[1].lower()
+    if ext in (".glb", ".gltf"):
+        return bpy.ops.import_scene.gltf(filepath=path)
+    if ext in (".usd", ".usda", ".usdc", ".usdz"):
+        return bpy.ops.wm.usd_import(filepath=path)
+    return bpy.ops.import_scene.x3d(filepath=path)
+
+
+def _export_usd(out):
+    return bpy.ops.wm.usd_export(filepath=out, export_materials=True, generate_preview_surface=True, export_lights=True,
+                                 export_cameras=True, use_instancing=True)
+
+
+def task_ingest(t):
+    """The other direction: a glTF or USD file into an empty scene, then out as X3D (each version asked for), and
+    optionally as USD. The X3D files go to the validators and to X_ITE; the counts say what Blender itself made of it."""
+    fresh()
+    t0 = time.time()
+    try:
+        imp = _import_any(t["src"])
+    except Exception as exc:
+        return {"error": "import: %s" % str(exc)[:300]}
+    res = {"import": sorted(imp), "import_s": round(time.time() - t0, 3), "counts": snapshot()["counts"],
+           "shared_meshes": _shared_meshes(), "smooth_faces": _smooth_faces(),
+           "materials": sorted({m.name for m in bpy.data.materials}),
+           "actions": len(bpy.data.actions), "armatures": len(bpy.data.armatures),
+           "shape_keys": sum(1 for m in bpy.data.meshes if m.shape_keys), "outputs": {}}
+    if "FINISHED" not in imp:
+        res["error"] = "import returned %s" % sorted(imp)
+        return res
+    for version in t.get("versions", ["X3D40"]):
+        out = "%s.%s.x3d" % (t["out_prefix"], version.lower())
+        try:
+            r, secs, size = do_export(out, version)
+            res["outputs"][version] = {"result": r, "seconds": round(secs, 3), "bytes": size, "output": out}
+        except Exception as exc:
+            res["outputs"][version] = {"error": str(exc)[:300]}
+    if t.get("usd"):
+        out = "%s.usdc" % t["out_prefix"]
+        try:
+            r = _export_usd(out)
+            res["outputs"]["USD"] = {"result": sorted(r), "bytes": os.path.getsize(out) if os.path.exists(out) else 0, "output": out}
+        except Exception as exc:
+            res["outputs"]["USD"] = {"error": str(exc)[:300]}
+    return res
+
+
+KINDS = {"probe": task_probe, "roundtrip": task_roundtrip, "render": task_render, "import": task_import, "convert": task_convert,
+         "ingest": task_ingest}
 
 try:
     for task in JOB["tasks"]:

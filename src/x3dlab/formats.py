@@ -13,7 +13,8 @@ different referee, so a loss can be pinned on one step:
 
 Stable API (other notebooks and sessions build on these names; a rename gets a deprecation alias first):
   match, compare_pngs, colour_kind, COLOUR_DELTA, validate_gltf, error_codes, losses, EXPECTED_LOSS, inline_wrapper,
-  has_usd. tests/test_formats_api.py holds each of them to its signature.
+  has_usd; and for the interchange run: usd_check, USD_SETTINGS, gltf_bounds, reference_camera, framed_scene, SAMPLES,
+  fetch_samples, sample_file. tests/test_formats_api.py holds each of them to its signature.
 
 Expected losses: glTF 2.0 has no place for X3D's behaviour (sensors, interpolators, ROUTEs, Script: glTF animation and
 KHR_interactivity are a different model), for Text, Billboard, LOD and Switch semantics, Background and Fog, or for
@@ -23,6 +24,7 @@ scoped lights. A scene whose difference is all expected is not a finding; one wi
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import subprocess
@@ -294,3 +296,282 @@ def has_usd(blender=None) -> dict:
 
 def safe_name(s: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", s).strip("_")[:80] or "x"
+
+
+# ====================================================================== USD
+USD_SETTINGS = {"format": "usdc", "metersPerUnit": 1.0, "upAxis": "Z", "defaultPrim": "root", "materials": "UsdPreviewSurface",
+                "instancing": True, "lights": True, "cameras": True}     # what blender_worker._export_usd writes (Blender 5.2.3)
+_USD_RULE_METHODS = ("CheckStage", "CheckDiagnostics", "CheckUnresolvedPaths", "CheckDependencies", "CheckLayer", "CheckZipFile",
+                     "CheckPrim", "ResetCaches")
+
+
+def ensure_usd() -> bool:
+    """pip install the pinned usd-core into this kernel if it is missing (about 27 MB). True when pxr imports."""
+    try:
+        import pxr  # noqa: F401
+        return True
+    except Exception:
+        pass
+    import sys
+    from . import pins
+    spec = pins.get("python", "usd_core", "usd-core")
+    with bus.span("pip install %s" % spec, src="formats"):
+        r = subprocess.run([sys.executable, "-m", "pip", "install", "-q", spec], capture_output=True, text=True, timeout=900)
+    if r.returncode:
+        bus.warn("usd-core install failed: %s" % (r.stderr or r.stdout)[-300:], src="formats")
+        return False
+    import importlib
+    importlib.invalidate_caches()
+    try:
+        import pxr  # noqa: F401,F811
+        return True
+    except Exception:
+        return False
+
+
+def usd_check(path) -> dict:
+    """Pixar's compliance checker on a USD file, plus what the stage holds. A rule that crashes inside the checker
+    (usd-core 25.11 lacks a shader resource one rule needs) is reported under `skipped_rules`, never as a failure.
+    Returns {ok, errors, warnings, failed, skipped_rules, stage: {upAxis, metersPerUnit, defaultPrim, types, instances,
+    prototypes}} or {ok: None, error} without usd-core."""
+    out = {"ok": None, "errors": [], "warnings": [], "failed": [], "skipped_rules": [], "stage": {}}
+    try:
+        from pxr import Usd, UsdGeom, UsdUtils
+    except Exception:
+        out["error"] = "usd-core is not installed (pip install %s)" % "usd-core"
+        return out
+    checker = UsdUtils.ComplianceChecker()
+    skipped = out["skipped_rules"]
+
+    def guard(fn, rule):
+        def run(*a, **k):
+            try:
+                return fn(*a, **k)
+            except Exception as exc:
+                name = type(rule).__name__
+                if not any(s["rule"] == name for s in skipped):
+                    skipped.append({"rule": name, "why": str(exc).strip().splitlines()[-1][:200] if str(exc).strip() else type(exc).__name__})
+        return run
+    for rule in getattr(checker, "_rules", []):
+        for m in _USD_RULE_METHODS:
+            if hasattr(rule, m):
+                setattr(rule, m, guard(getattr(rule, m), rule))
+    try:
+        checker.CheckCompliance(str(path))
+    except Exception as exc:
+        out["errors"].append("checker: %s" % str(exc)[:300])
+    out["errors"] += [str(e)[:300] for e in checker.GetErrors()]
+    out["warnings"] = [str(w)[:300] for w in checker.GetWarnings()][:20]
+    failed = [str(f)[:300] for f in checker.GetFailedChecks()]
+    try:                       # without shader definitions every shader looks "invalid": that is the wheel, not the file
+        from pxr import Sdr
+        no_defs = Sdr.Registry().GetShaderNodeByIdentifier("UsdPreviewSurface") is None
+    except Exception:
+        no_defs = True
+    if no_defs and any("ShaderPropertyTypeConformanceChecker" in f for f in failed):
+        failed = [f for f in failed if "ShaderPropertyTypeConformanceChecker" not in f]
+        if not any(x["rule"] == "ShaderPropertyTypeConformanceChecker" for x in skipped):
+            skipped.append({"rule": "ShaderPropertyTypeConformanceChecker",
+                            "why": "this usd-core has no shader definitions (Sdr does not know UsdPreviewSurface)"})
+        else:
+            next(x for x in skipped if x["rule"] == "ShaderPropertyTypeConformanceChecker")["why"] += \
+                "; this usd-core has no shader definitions (Sdr does not know UsdPreviewSurface)"
+    out["failed"] = failed[:20]
+    out["ok"] = not out["errors"] and not out["failed"]
+    try:
+        st = Usd.Stage.Open(str(path))
+        prims = list(st.Traverse())
+        from collections import Counter
+        out["stage"] = {"upAxis": str(UsdGeom.GetStageUpAxis(st)), "metersPerUnit": UsdGeom.GetStageMetersPerUnit(st),
+                        "defaultPrim": st.GetDefaultPrim().GetName() if st.GetDefaultPrim() else None,
+                        "types": dict(Counter(p.GetTypeName() for p in prims if p.GetTypeName())),
+                        "instances": sum(1 for p in prims if p.IsInstance()), "prototypes": len(st.GetPrototypes())}
+    except Exception as exc:
+        out["stage"] = {"error": str(exc)[:300]}
+    return out
+
+
+# ====================================================================== glTF files: bounds and a camera that frames them
+def gltf_json(path) -> dict:
+    """The JSON part of a .gltf or .glb."""
+    import struct
+    data = Path(path).read_bytes()
+    if data[:4] == b"glTF":
+        length, ctype = struct.unpack_from("<II", data, 12)
+        return json.loads(data[20:20 + length].decode("utf-8"))
+    return json.loads(data.decode("utf-8"))
+
+
+def _node_matrix(n: dict):
+    import numpy as np
+    if "matrix" in n:
+        return np.array(n["matrix"], dtype=float).reshape(4, 4).T          # glTF stores column-major
+    t = np.array(n.get("translation", [0, 0, 0]), dtype=float)
+    x, y, z, w = n.get("rotation", [0, 0, 0, 1])
+    s = np.array(n.get("scale", [1, 1, 1]), dtype=float)
+    r = np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+                  [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+                  [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]])
+    m = np.eye(4)
+    m[:3, :3] = r * s
+    m[:3, 3] = t
+    return m
+
+
+def gltf_bounds(path) -> dict:
+    """World-space bounds of the default scene, from each POSITION accessor's min/max (required by the glTF spec)
+    through the node transforms. Skins, morph targets and GPU instancing are ignored. {min, max, center, radius}."""
+    import numpy as np
+    j = gltf_json(path)
+    nodes, meshes, acc = j.get("nodes", []), j.get("meshes", []), j.get("accessors", [])
+    if j.get("scenes"):
+        roots = j["scenes"][j.get("scene", 0)].get("nodes", [])
+    else:
+        children = {c for n in nodes for c in n.get("children", [])}
+        roots = [i for i in range(len(nodes)) if i not in children]
+    lo, hi = np.full(3, np.inf), np.full(3, -np.inf)
+    stack = [(i, np.eye(4)) for i in roots]
+    while stack:
+        i, parent = stack.pop()
+        n = nodes[i]
+        world = parent @ _node_matrix(n)
+        if "mesh" in n:
+            for prim in meshes[n["mesh"]].get("primitives", []):
+                a = acc[prim["attributes"]["POSITION"]] if "POSITION" in prim.get("attributes", {}) else None
+                if not a or "min" not in a or "max" not in a:
+                    continue
+                mn, mx = a["min"], a["max"]
+                corners = np.array([[x, y, z, 1] for x in (mn[0], mx[0]) for y in (mn[1], mx[1]) for z in (mn[2], mx[2])]).T
+                w = (world @ corners)[:3]
+                lo, hi = np.minimum(lo, w.min(1)), np.maximum(hi, w.max(1))
+        stack += [(c, world) for c in n.get("children", [])]
+    if not np.isfinite(lo).all():
+        return {"min": None, "max": None, "center": [0.0, 0.0, 0.0], "radius": 1.0}
+    c = (lo + hi) / 2
+    return {"min": [round(float(v), 6) for v in lo], "max": [round(float(v), 6) for v in hi],
+            "center": [round(float(v), 6) for v in c], "radius": round(float(np.linalg.norm(hi - lo) / 2) or 1.0, 6)}
+
+
+VIEWS = {   # unit vectors from the model's centre to the camera; up is always +Y
+    "three-quarter": (math.sin(math.radians(30)) * math.cos(math.radians(20)), math.sin(math.radians(20)),
+                      math.cos(math.radians(30)) * math.cos(math.radians(20))),     # front-right-above: no plane is edge-on
+    "front": (0.0, 0.0, 1.0),
+}
+
+
+def _look_rotation(direction) -> list:
+    """X3D orientation (axis, angle) for a camera at +direction looking back at the origin with +Y up."""
+    import numpy as np
+    z = np.array(direction, dtype=float)
+    z /= np.linalg.norm(z)
+    x = np.cross([0.0, 1.0, 0.0], z)
+    x = x / np.linalg.norm(x) if np.linalg.norm(x) > 1e-9 else np.array([1.0, 0.0, 0.0])
+    y = np.cross(z, x)
+    m = np.column_stack([x, y, z])
+    angle = math.acos(max(-1.0, min(1.0, (np.trace(m) - 1) / 2)))
+    if angle < 1e-9:
+        return [0.0, 0.0, 1.0, 0.0]
+    axis = np.array([m[2, 1] - m[1, 2], m[0, 2] - m[2, 0], m[1, 0] - m[0, 1]]) / (2 * math.sin(angle))
+    return [round(float(v), 6) for v in axis] + [round(angle, 6)]
+
+
+def reference_camera(bounds: dict, fov: float = math.pi / 4, margin: float = 1.1, view: str = "three-quarter") -> dict:
+    """The reference-stills camera (coordination doc, item 4): at margin * r / sin(fov/2) from the centre along VIEWS[view]
+    (default three-quarter: front-right-above, so a flat model in any principal plane still shows), looking at the
+    centre with +Y up; near plane and visibility scaled to the model so tiny and huge models both show.
+    Other engines reproduce it from `position`, `centerOfRotation` (look-at) and up +Y, or from `orientation`."""
+    c, r = bounds["center"], float(bounds["radius"] or 1.0)
+    d = margin * r / math.sin(fov / 2)
+    u = VIEWS.get(view, VIEWS["three-quarter"])
+    return {"position": [c[i] + d * u[i] for i in range(3)], "orientation": _look_rotation(u), "centerOfRotation": list(c),
+            "up": [0.0, 1.0, 0.0], "view": view, "fieldOfView": fov, "distance": d,
+            "avatarSize": [max(1e-5, d * 0.01), 1.6, 0.75], "visibilityLimit": d + 4 * r}
+
+
+def framed_scene(url: str, cam: dict, background: str = "1 0 1", headlight: bool = True, version: str = "4.0") -> str:
+    """An X3D page that shows `url` (glTF or X3D) through Inline under `cam`: how every reference still is taken."""
+    f = lambda v: " ".join("%.6g" % x for x in v)          # noqa: E731
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n<X3D profile="Full" version="%s"><head/><Scene>\n'
+            '  <Background skyColor="%s"/>\n'
+            '  <NavigationInfo headlight="%s" type=\'"EXAMINE" "ANY"\' avatarSize="%s" visibilityLimit="%.6g"/>\n'
+            '  <Viewpoint position="%s" orientation="%s" centerOfRotation="%s" fieldOfView="%.6g" description="reference"/>\n'
+            '  <Inline url=\'"%s"\'/>\n</Scene></X3D>\n') % (
+        version, background, "true" if headlight else "false", f(cam["avatarSize"]), cam["visibilityLimit"],
+        f(cam["position"]), f(cam.get("orientation", [0, 0, 1, 0])), f(cam["centerOfRotation"]), cam["fieldOfView"], url)
+
+
+# ====================================================================== the Khronos sample models
+# name -> (variant, what it probes in X3D terms). Small models only (about 14 MB in all), one feature each.
+SAMPLES = {
+    "Box": ("glTF-Binary", "one mesh, one PBR material -> Shape, PhysicalMaterial"),
+    "BoxInterleaved": ("glTF-Binary", "interleaved vertex buffers"),
+    "BoxTextured": ("glTF-Binary", "base colour texture -> ImageTexture, TextureCoordinate"),
+    "BoxVertexColors": ("glTF-Binary", "vertex colours -> Color"),
+    "Triangle": ("glTF-Embedded", "the smallest glTF: no material, data URI buffer"),
+    "TriangleWithoutIndices": ("glTF-Embedded", "non-indexed triangles -> TriangleSet"),
+    "SimpleMeshes": ("glTF-Embedded", "one mesh used by two nodes -> DEF/USE"),
+    "MeshPrimitiveModes": ("glTF-Embedded", "points, lines, loops, strips, fans -> PointSet, LineSet, *StripSet, *FanSet"),
+    "OrientationTest": ("glTF-Binary", "node rotations: the handedness and up-axis check"),
+    "NegativeScaleTest": ("glTF-Binary", "mirroring flips the winding -> ccw"),
+    "TextureCoordinateTest": ("glTF-Binary", "UV orientation"),
+    "TextureSettingsTest": ("glTF-Binary", "wrap and filter modes -> TextureProperties"),
+    "MultiUVTest": ("glTF-Binary", "two UV sets -> MultiTextureCoordinate"),
+    "TextureTransformTest": ("glTF", "KHR_texture_transform -> TextureTransform"),
+    "VertexColorTest": ("glTF-Binary", "vertex colour vs texture"),
+    "NormalTangentTest": ("glTF-Binary", "normal maps and tangents -> PhysicalMaterial.normalTexture, Tangent (4.1)"),
+    "MetalRoughSpheresNoTextures": ("glTF-Binary", "the metallic/roughness grid -> PhysicalMaterial"),
+    "AlphaBlendModeTest": ("glTF-Binary", "OPAQUE, MASK, BLEND -> Appearance.alphaMode, alphaCutoff"),
+    "TwoSidedPlane": ("glTF", "doubleSided -> solid false"),
+    "Cameras": ("glTF-Embedded", "perspective and orthographic cameras -> Viewpoint, OrthoViewpoint"),
+    "LightsPunctualLamp": ("glTF-Binary", "KHR_lights_punctual -> SpotLight, PointLight"),
+    "DirectionalLight": ("glTF-Binary", "a directional light -> DirectionalLight"),
+    "UnlitTest": ("glTF-Binary", "KHR_materials_unlit -> UnlitMaterial"),
+    "EmissiveStrengthTest": ("glTF-Binary", "KHR_materials_emissive_strength: emission above 1"),
+    "BoxAnimated": ("glTF-Binary", "node animation -> TimeSensor and interpolators"),
+    "InterpolationTest": ("glTF-Binary", "STEP, LINEAR, CUBICSPLINE interpolation"),
+    "AnimatedTriangle": ("glTF-Embedded", "rotation animation"),
+    "MorphPrimitivesTest": ("glTF-Binary", "morph targets"),
+    "SimpleSkin": ("glTF-Embedded", "skinning (X3D has HAnim, not general skins)"),
+    "SimpleInstancing": ("glTF-Binary", "EXT_mesh_gpu_instancing"),
+    "Duck": ("glTF-Binary", "the classic textured model"),
+    "DamagedHelmet": ("glTF-Binary", "full PBR: base, metal-rough, normal, occlusion, emissive textures"),
+}
+
+
+def fetch_samples(names: list | None = None, ref: str = "", repo: str = "") -> Path:
+    """A sparse, blob-less checkout of the Khronos sample assets at the pinned commit, holding only the named models'
+    variants (and the model index). Cached under the lab's vendor folder. Returns its root."""
+    from . import pins
+    repo = repo or "https://github.com/%s" % pins.get("gltf_samples", "repo", "KhronosGroup/glTF-Sample-Assets")
+    ref = ref or pins.get("gltf_samples", "ref")
+    names = list(names or SAMPLES)
+    root = runtime.sub("vendor", "gltf-sample-assets-%s" % ref[:12])
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
+    git = lambda *a, t=900: subprocess.run(["git", *a], cwd=root, capture_output=True, text=True, env=env, timeout=t)   # noqa: E731
+    if not (root / ".git").is_dir():
+        for cmd in (("init", "-q"), ("remote", "add", "origin", repo)):
+            git(*cmd)
+    patterns = ["/Models/model-index.json"] + ["/Models/%s/%s/" % (n, SAMPLES[n][0]) for n in names if n in SAMPLES]
+    want = root / ".x3dlab-sparse"
+    if not want.exists() or want.read_text() != "\n".join(patterns) or not (root / "Models").is_dir():
+        if git("cat-file", "-e", "%s^{commit}" % ref).returncode:
+            r = git("fetch", "-q", "--depth", "1", "--filter=blob:none", "origin", ref)
+            if r.returncode:
+                raise RuntimeError("fetching the glTF sample assets failed: %s" % (r.stderr or r.stdout)[-300:])
+        git("sparse-checkout", "init", "--no-cone")
+        r = git("sparse-checkout", "set", "--no-cone", *patterns)
+        r2 = git("checkout", "-q", ref)
+        if r.returncode or r2.returncode:
+            raise RuntimeError("checking out the glTF sample assets failed: %s" % ((r.stderr or "") + (r2.stderr or ""))[-300:])
+        want.write_text("\n".join(patterns))
+    return root
+
+
+def sample_file(root: Path, name: str) -> Path | None:
+    """The model file of a sample's variant (the .glb, or the .gltf of an embedded or separate variant)."""
+    d = Path(root) / "Models" / name / SAMPLES[name][0]
+    for pat in ("*.glb", "*.gltf"):
+        hits = sorted(d.glob(pat))
+        if hits:
+            return hits[0]
+    return None
