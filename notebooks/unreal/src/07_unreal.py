@@ -343,6 +343,10 @@ try:
 except Exception:
     def secret(k):
         return os.environ.get(k)
+if Path("/content").is_dir() and not pipeline.drive_mounted(DRIVE_DIR):
+    raise SystemExit("❌ Google Drive is not mounted, so the engine in %s cannot be seen. Run `from google.colab import drive; "
+                     "drive.mount('/content/drive', force_remount=True)`, sign in with the account that owns the engine files, "
+                     "then run this step again." % DRIVE_DIR)
 LAB = pipeline.Lab(work=WORK, hw=HW, plan=PLAN)
 LAB.live = live.Live(verbose=VERBOSE, visual=VISUAL, every=HEARTBEAT_S, disk_path=str(WORK)) if (VERBOSE or VISUAL) else None
 if GENTLE and HW["gpu"]:
@@ -388,6 +392,10 @@ elif ENGINE.get("version") and PLAN["ray_tracing"]["hw_rt"]:
 if ENGINE.get("version") and CACHE_ENGINE and ENGINE["source"] != "drive cache" and Path(DRIVE_DIR).exists():
     CARD["engine_cache"] = pipeline.cache_engine(LAB, DRIVE_DIR, ENGINE["version"])
     print("Drive cache:", CARD["engine_cache"])
+if ENGINE.get("version") and CACHE_ENGINE and Path(DRIVE_DIR).exists() and not ENGINE.get("parts"):
+    print("one-time: splitting the engine cache into %d parts on Drive, so the next runtime restores it in parallel…" % engine.PARTS)
+    CARD["engine_parts"] = pipeline.cache_engine_parts(LAB, DRIVE_DIR, ENGINE["version"])
+    print("Drive cache (parts):", CARD["engine_parts"])
 
 # %% [markdown]
 # ## 6 · First start: prove the RHI, pay the shader bill

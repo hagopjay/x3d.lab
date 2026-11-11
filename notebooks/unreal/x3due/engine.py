@@ -262,6 +262,174 @@ def unarchive_cmd(archive_path, dest_parent) -> list:
     return ["tar", "-xzf", str(archive_path), "-C", str(dest_parent)]
 
 
+# ---------------------------------------------------------------------- zstd that always works
+def ensure_zstd(log=print, run=subprocess.run) -> str:
+    """'zstd' when the zstd program is (or could be made) available, else 'python' (the zstandard package, a dependency of
+    x3dlab), else 'none'. 11 Nov 2026, Colab T4: `apt-get install zstd` failed silently, the cache restore died in a
+    second and step 5 fell back to an 18-minute zip extract. Now: install, check, update the package lists and retry,
+    then fall back to Python. Says what happened."""
+    if tool("zstd"):
+        return "zstd"
+    for cmd in (["apt-get", "install", "-y", "-qq", "zstd"], ["apt-get", "update", "-qq"], ["apt-get", "install", "-y", "-qq", "zstd"]):
+        try:
+            r = run(cmd, capture_output=True, text=True, timeout=600)
+            if cmd[1] == "install" and r.returncode and r.stderr:
+                log("  %s: %s" % (" ".join(cmd[:3]), r.stderr.strip().splitlines()[-1][:160]))
+        except Exception as exc:
+            log("  %s: %s" % (" ".join(cmd[:3]), exc))
+        if tool("zstd"):
+            log("zstd installed")
+            return "zstd"
+    try:
+        import zstandard  # noqa: F401
+        log("the zstd program is not available here: using Python's zstandard instead (a bit slower, same archives)")
+        return "python"
+    except ImportError:
+        return "none"
+
+
+def _pipe(producer: list, consumer: list, cwd=None) -> int:
+    """producer | consumer, both as argv lists; returns the first non-zero return code."""
+    a = subprocess.Popen(producer, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd)
+    b = subprocess.Popen(consumer, stdin=a.stdout, stderr=subprocess.PIPE, cwd=cwd)
+    a.stdout.close()
+    eb = b.communicate()[1]
+    ea = a.communicate()[1]
+    if a.returncode or b.returncode:
+        raise RuntimeError("%s | %s failed: %s %s" % (producer[0], consumer[0], (ea or b"")[-300:].decode(errors="replace"),
+                                                      (eb or b"")[-300:].decode(errors="replace")))
+    return 0
+
+
+def zstd_into_tar(src, tar_args: list, how: str) -> None:
+    """Decompress `src` (a .tar.zst, read straight from Drive) into `tar -x -f - <tar_args>`."""
+    if how == "zstd":
+        _pipe(["zstd", "-d", "-c", "-q", str(src)], ["tar", "-x", "-f", "-"] + tar_args)
+        return
+    import zstandard
+    p = subprocess.Popen(["tar", "-x", "-f", "-"] + tar_args, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        with open(src, "rb") as f, zstandard.ZstdDecompressor().stream_reader(f, read_size=8 << 20, read_across_frames=True) as r:
+            shutil.copyfileobj(r, p.stdin, 8 << 20)
+    finally:
+        p.stdin.close()
+    err = p.stderr.read()
+    if p.wait():
+        raise RuntimeError("tar -x failed: %s" % err[-300:].decode(errors="replace"))
+
+
+def tar_into_zstd(tar_args: list, out, how: str, level=3) -> None:
+    """`tar -c -f - <tar_args>` compressed into `out`."""
+    if how == "zstd":
+        _pipe(["tar", "-c", "-f", "-"] + tar_args, ["zstd", "-T0", "-%d" % level, "-q", "-f", "-o", str(out)])
+        return
+    import zstandard
+    p = subprocess.Popen(["tar", "-c", "-f", "-"] + tar_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    with open(out, "wb") as f, zstandard.ZstdCompressor(level=level, threads=-1).stream_writer(f, closefd=False) as w:
+        shutil.copyfileobj(p.stdout, w, 8 << 20)
+    err = p.stderr.read()
+    if p.wait():
+        raise RuntimeError("tar -c failed: %s" % err[-300:].decode(errors="replace"))
+
+
+def extract_archive(arc, dest_parent, how=None, log=print) -> dict:
+    """One .tar.zst / .tar.gz into dest_parent, whatever zstd tool there is."""
+    t0 = time.time()
+    Path(dest_parent).mkdir(parents=True, exist_ok=True)
+    if str(arc).endswith(".zst"):
+        zstd_into_tar(arc, ["-C", str(dest_parent)], how or ensure_zstd(log))
+    else:
+        r = subprocess.run(["tar", "-xzf", str(arc), "-C", str(dest_parent)], capture_output=True, text=True)
+        if r.returncode:
+            raise RuntimeError("tar -xzf failed: %s" % r.stderr[-300:])
+    return {"rc": 0, "seconds": round(time.time() - t0, 1)}
+
+
+# ---------------------------------------------------------------------- the parallel Drive cache
+PARTS = 8
+
+
+def plan_parts(root, n=PARTS) -> list[list[str]]:
+    """Every entry under `root` (relative paths; directories and symlinks too) in `n` lists of about equal size. The
+    biggest files go first, each to the lightest list. Directories go to list 0 so empty ones survive."""
+    root = Path(root)
+    files, dirs = [], []
+    for dp, dns, fns in os.walk(root):
+        rel = os.path.relpath(dp, root)
+        if rel != ".":
+            dirs.append(rel)
+        for d in dns:
+            full = os.path.join(dp, d)
+            if os.path.islink(full):
+                files.append((os.path.relpath(full, root), 0))
+        for f in fns:
+            full = os.path.join(dp, f)
+            try:
+                size = os.lstat(full).st_size
+            except OSError:
+                continue
+            files.append((os.path.relpath(full, root), size))
+    bins = [[] for _ in range(max(1, n))]
+    load = [0] * len(bins)
+    for rel, size in sorted(files, key=lambda x: -x[1]):
+        i = load.index(min(load))
+        bins[i].append(rel)
+        load[i] += size
+    bins[0] = sorted(dirs) + bins[0]
+    return [b for b in bins if b]
+
+
+def write_parts(root, out_dir, n=PARTS, how=None, log=print, level=3) -> dict:
+    """The tree at `root` as `n` part-XX.tar.zst in `out_dir` plus parts.json. Paths are relative to `root`."""
+    how = how or ensure_zstd(log)
+    if how == "none":
+        raise RuntimeError("no zstd program and no zstandard package")
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    t0 = time.time()
+    parts = []
+    for i, entries in enumerate(plan_parts(root, n)):
+        lst = out_dir / ("part-%02d.list" % i)
+        lst.write_text("\n".join(entries) + "\n")
+        arc = out_dir / ("part-%02d.tar.zst" % i)
+        tar_into_zstd(["-C", str(root), "--no-recursion", "-T", str(lst)], arc, how, level)
+        lst.unlink()
+        parts.append({"name": arc.name, "entries": len(entries), "bytes": arc.stat().st_size})
+        log("  part %d/%d: %d entries, %.2f GB (%.0f s)" % (i + 1, n, len(entries), arc.stat().st_size / 2**30, time.time() - t0))
+    meta = {"format": "x3due-parts-1", "parts": parts, "tool": how, "seconds": round(time.time() - t0, 1)}
+    (out_dir / "parts.json").write_text(json.dumps(meta, indent=1))
+    return meta
+
+
+def extract_parts(parts_dir, dest, workers=None, how=None, log=print) -> dict:
+    """All parts of a parts_dir (on Drive) into `dest`, `workers` at once, each streamed straight from Drive through zstd
+    into tar: no local copy, and several Drive reads in flight at once (one read stream ran at ~40-45 MB/s on Colab)."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    parts_dir, dest = Path(parts_dir), Path(dest)
+    meta = json.loads((parts_dir / "parts.json").read_text())
+    how = how or ensure_zstd(log)
+    dest.mkdir(parents=True, exist_ok=True)
+    t0 = time.time()
+    total = sum(p["bytes"] for p in meta["parts"])
+    done = {"bytes": 0, "n": 0}
+
+    def one(p):
+        zstd_into_tar(parts_dir / p["name"], ["-C", str(dest)], how)
+        return p
+
+    with ThreadPoolExecutor(max_workers=workers or len(meta["parts"])) as ex:
+        for fut in as_completed([ex.submit(one, p) for p in meta["parts"]]):
+            p = fut.result()
+            done["bytes"] += p["bytes"]
+            done["n"] += 1
+            el = time.time() - t0
+            log("  part %d/%d done · %.1f of %.1f GB read · %.0f MB/s from Drive" % (
+                done["n"], len(meta["parts"]), done["bytes"] / 2**30, total / 2**30, done["bytes"] / 2**20 / max(el, 0.1)))
+    el = time.time() - t0
+    return {"parts": len(meta["parts"]), "gb": round(total / 2**30, 2), "seconds": round(el, 1),
+            "mb_s": round(total / 2**20 / max(el, 0.1)), "tool": how}
+
+
 def drive_free_gb(path) -> float | None:
     try:
         st = os.statvfs(path)
