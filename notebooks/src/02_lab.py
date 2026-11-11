@@ -33,8 +33,20 @@ LAB_REF = "main"
 
 import importlib.util, os, subprocess, sys
 if not os.environ.get("X3DLAB_DEV") and (importlib.util.find_spec("x3dlab") is None or os.environ.get("X3DLAB_REINSTALL")):
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q",
-                    "x3dlab[notebook,tunnels] @ git+https://github.com/%s@%s" % (LAB_REPO, LAB_REF)], check=True)
+    env = dict(os.environ)
+    try:                       # a private repo: a read-only token from Colab Secrets, sent as a git header (never printed)
+        from google.colab import userdata
+        token = userdata.get("GITHUB_TOKEN")
+    except Exception:
+        token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        import base64
+        env.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="http.https://github.com/%s.extraheader" % LAB_REPO,
+                   GIT_CONFIG_VALUE_0="AUTHORIZATION: basic " + base64.b64encode(("x-access-token:" + token).encode()).decode())
+    if subprocess.run([sys.executable, "-m", "pip", "install", "-q",
+                       "x3dlab[notebook,tunnels] @ git+https://github.com/%s@%s" % (LAB_REPO, LAB_REF)], env=env).returncode:
+        raise SystemExit("x3dlab did not install from github.com/%s. If that repo is private, add a read-only GitHub token as the "
+                         "Colab secret GITHUB_TOKEN (key icon, left bar) and allow this notebook to read it." % LAB_REPO)
 import x3dlab
 from x3dlab import labui, stress
 
