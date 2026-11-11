@@ -1,10 +1,16 @@
 """Give headless Chrome (and Cycles' OptiX denoiser) the GPU on Colab: install the graphics half of the NVIDIA driver.
 
 Colab's containers carry NVIDIA's *compute* userspace (CUDA, NVML, OptiX ray tracing) but not the *graphics* one: no
-Vulkan ICD, no GLX/EGL libraries, no OptiX denoiser model (nvoptix.bin). Chrome then falls back to SwiftShader (WebGL
-and WebGPU on the CPU) and Cycles' OptiX denoiser cannot start. Installing `libnvidia-gl-<branch>` at exactly the
-driver's version adds them; Chrome then runs ANGLE on Vulkan on the real GPU when started with GPU_ARGS (which include
---disable-vulkan-surface: headless Chrome has no window surface to give Vulkan).
+Vulkan ICD, no GLX/EGL libraries, no OptiX denoiser model (nvoptix.bin); the container is started with
+NVIDIA_DRIVER_CAPABILITIES=compute,utility. Chrome then falls back to SwiftShader (WebGL and WebGPU on the CPU) and
+Cycles' OptiX denoiser cannot start.
+
+`apt-get install libnvidia-gl-<branch>=<driver version>` does not work there: its dependency chain (libnvidia-compute,
+-decode, -cfg1, ...) wants newer versions or to replace Colab's own CUDA libraries. So enable() downloads just the
+graphics packages at exactly the driver's version (libnvidia-gl, libnvidia-gpucomp, libnvidia-common) and unpacks
+their files with `dpkg -x`: no dependency solving, CUDA untouched. Confirmed on Colab, A100, driver 580.82.07 (10 Nov
+2026): vulkaninfo then lists the A100 and nvoptix.bin is present. Chrome runs ANGLE on Vulkan on the real GPU when
+started with GPU_ARGS (which include --disable-vulkan-surface: headless Chrome has no window surface to give Vulkan).
 
     from x3dlab import graphics
     print(graphics.enable())        # installs only an exact version match; never a different driver version
@@ -84,9 +90,37 @@ def status() -> dict:
             "nvoptix_bin": optix, "vulkan_devices": vulkan_devices()}
 
 
+# The graphics half: GLX/EGL/Vulkan ICD, libnvidia-rtcore/libnvoptix + nvoptix.bin (in libnvidia-gl), the shader
+# compiler libnvidia-gpucomp it needs, and libnvidia-common (application profiles). None of them carries libcuda.
+GRAPHICS_PACKAGES = ("libnvidia-gl-{major}", "libnvidia-gpucomp-{major}", "libnvidia-common-{major}")
+
+
+def unpack(pkg_version: tuple[str, str], workdir: str = "/tmp/x3dlab-nvgl") -> dict:
+    """Download the graphics packages at exactly `version` and unpack their files into / (dpkg -x, no apt records)."""
+    pkg, version = pkg_version
+    m = re.match(r"libnvidia-gl-(\d+)(-server)?$", pkg)
+    major, server = m.group(1), m.group(2) or ""
+    names = [p.format(major=major) + server for p in GRAPHICS_PACKAGES]
+    os.makedirs(workdir, exist_ok=True)
+    for f in os.listdir(workdir):
+        if f.endswith(".deb"):
+            os.remove(os.path.join(workdir, f))
+    got, errors = [], []
+    for name in names:                       # one by one: a package missing at this version must not stop the others
+        r = subprocess.run(["apt-get", "download", "%s=%s" % (name, version)], cwd=workdir, capture_output=True, text=True, timeout=600)
+        if r.returncode:
+            errors.append("%s: %s" % (name, (r.stderr or r.stdout).strip().splitlines()[-1:] or ["failed"]))
+    for deb in sorted(f for f in os.listdir(workdir) if f.endswith(".deb")):
+        r = _run(["dpkg", "-x", os.path.join(workdir, deb), "/"], 300)
+        (got if r.returncode == 0 else errors).append(deb if r.returncode == 0 else "%s: %s" % (deb, r.stderr[-200:]))
+    _run(["ldconfig"], 120)
+    return {"unpacked": got, "errors": errors}
+
+
 def enable(install: bool = True, update: bool = True) -> dict:
-    """Install the matching libnvidia-gl package (and vulkan-tools) if the GPU's graphics userspace is missing.
-    Safe to call anywhere: without an NVIDIA GPU, without apt, or without an exact match it changes nothing."""
+    """Put the GPU's graphics userspace in place if it is missing (see the module docstring), plus vulkan-tools.
+    Safe to call anywhere: without an NVIDIA GPU, without apt, or without an exact version match it changes nothing.
+    Errors are returned (rep["errors"]) and logged, never swallowed."""
     st = status()
     rep = {"before": st, "installed": None, "skipped": None}
     if not st["driver"]:
@@ -107,12 +141,17 @@ def enable(install: bool = True, update: bool = True) -> dict:
                           "break the driver, so nothing was installed" % st["driver"])
         bus.warn(rep["skipped"], src="graphics")
         return rep
+    rep["errors"] = []
     if install:
-        with bus.span("install %s=%s + vulkan-tools" % pick, src="graphics"):
-            r = _run(["apt-get", "install", "-y", "-qq", "--no-install-recommends", "%s=%s" % pick, "vulkan-tools"], 900)
-        rep["installed"] = "%s=%s" % pick
+        with bus.span("unpack %s=%s and its graphics siblings" % pick, src="graphics"):
+            u = unpack(pick)
+        rep["installed"] = "%s=%s" % pick if u["unpacked"] else None
+        rep["unpacked"], rep["errors"] = u["unpacked"], u["errors"]
+        r = _run(["apt-get", "install", "-y", "-qq", "--no-install-recommends", "vulkan-tools"], 600)
         if r.returncode:
-            rep["error"] = (r.stderr or r.stdout)[-600:]
+            rep["errors"].append("vulkan-tools: %s" % (r.stderr or r.stdout).strip()[-300:])
+        for e in rep["errors"]:
+            bus.warn("graphics: %s" % e, src="graphics")
     rep["after"] = status()
     ok = bool(rep["after"]["nvidia_vulkan_icd"])
     bus.info("NVIDIA graphics userspace %s: Vulkan devices %s, nvoptix.bin %s" % (
