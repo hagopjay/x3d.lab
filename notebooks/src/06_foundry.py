@@ -59,6 +59,8 @@ keys.widget()
 BLENDER_SOURCE = "auto"  #@param ["auto", "wheel", "tarball"]
 bl = lab.setup_blender(BLENDER_SOURCE)
 print("Blender %s · Cycles backend if asked for: %s" % (bl.version, bl.best_backend))
+from x3dlab import toolchain
+print("toolchain:", toolchain.line(toolchain.report(lab)))   # what will really run, and where each piece came from
 
 # %% [markdown]
 # ## 4 · The round
