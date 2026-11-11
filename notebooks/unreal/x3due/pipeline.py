@@ -14,6 +14,7 @@ uerun.RETRY when its log shows a known crash signature, and every attempt is rec
 from __future__ import annotations
 
 import glob
+import re
 import json
 import math
 import os
@@ -72,16 +73,23 @@ class Lab:
 
 
 # ---------------------------------------------------------------------- engine
-def get_engine(lab: Lab, source="auto", drive_dir=None, ghcr_tag=None, ghcr_user=None, ghcr_token=None, trim=E.TRIM_SAFE) -> dict:
-    """Engine onto local disk. Returns {"source", "version", "seconds", ...}; raises with an actionable message."""
+def get_engine(lab: Lab, source="auto", drive_dir=None, ghcr_tag=None, ghcr_user=None, ghcr_token=None, trim=E.TRIM_SAFE,
+               want="newest") -> dict:
+    """Engine onto local disk. Returns {"source", "version", "seconds", ...}; raises with an actionable message.
+    want: the engine version to use ("5.4", "5.8.4", "newest"): an engine already on disk, a Drive cache archive and a
+    Drive zip are all chosen by it, so changing it in the options switches engines."""
     t0 = time.time()
     dest = lab.engine_dir
-    if E.check_engine(dest)["ok"]:
-        return {"source": "already on disk", **E.check_engine(dest), "seconds": 0}
+    have = E.check_engine(dest)
+    if have["ok"]:
+        if want in (None, "", "newest") or E.pick_version(["UE_%s" % have.get("version")], want):
+            return {"source": "already on disk", **have, "seconds": 0}
+        lab.log("engine %s on disk is not the %s asked for: removing it" % (have.get("version"), want))
+        shutil.rmtree(dest, ignore_errors=True)
     tried = []
     drive_dir = Path(drive_dir) if drive_dir else None
     if source in ("auto", "cache") and drive_dir:
-        arcs = sorted(glob.glob(str(drive_dir / "cache" / "UE_*_trimmed.tar.*")))
+        arcs = E.pick_version(glob.glob(str(drive_dir / "cache" / "UE_*_trimmed.tar.*")), want)
         if arcs:
             lab.log("restoring the trimmed engine from your Drive: %s" % os.path.basename(arcs[-1]))
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -94,9 +102,9 @@ def get_engine(lab: Lab, source="auto", drive_dir=None, ghcr_tag=None, ghcr_user
                 return {"source": "drive cache", "archive": arcs[-1], **E.check_engine(dest), "seconds": round(time.time() - t0, 1)}
             tried.append("cache %s did not give a working engine (rc %s)" % (arcs[-1], r["rc"]))
         else:
-            tried.append("no cache archive in %s/cache" % drive_dir)
+            tried.append("no cache archive for %s in %s/cache" % (want, drive_dir))
     if source in ("auto", "zip") and drive_dir:
-        zips = E.find_zips(drive_dir)
+        zips = E.pick_version(E.find_zips(drive_dir), want)
         if zips:
             z = zips[-1]
             plan = E.zip_plan(z, trim)
@@ -122,7 +130,8 @@ def get_engine(lab: Lab, source="auto", drive_dir=None, ghcr_tag=None, ghcr_user
                 raise RuntimeError("the extracted engine is missing %s" % chk["missing"])
             return {"source": "drive zip", "zip": z, "plan": plan, "strategy": strat, "extract": st, **chk,
                     "seconds": round(time.time() - t0, 1)}
-        tried.append("no Linux_Unreal_Engine_*.zip in %s" % drive_dir)
+        tried.append("no Linux_Unreal_Engine_*.zip for %s in %s (found: %s)" % (
+            want, drive_dir, ", ".join(os.path.basename(z) for z in E.find_zips(drive_dir)) or "none"))
     if source in ("auto", "ghcr") and ghcr_token and ghcr_tag:
         reg = oci.Registry("ghcr.io", ghcr_user, ghcr_token)
         m = reg.manifest("epicgames/unreal-engine", ghcr_tag)
@@ -239,6 +248,19 @@ def run_unreal(lab: Lab, make_cmd, label, log_dir, timeout=7200, done_file=None,
     last["attempts"] = [{x: a.get(x) for x in ("rc", "seconds", "killed", "change", "attempt")} for a in attempts]
     last["excerpt"] = uerun.excerpt(Path(last["log"]).read_text(errors="replace")) if Path(last["log"]).exists() else ""
     return last
+
+
+def crash_stack(lab: Lab, max_chars=2500) -> str:
+    """The call stack of Unreal's newest crash report under the project's Saved/Crashes, or ''."""
+    dirs = sorted(glob.glob(str(lab.project_dir / "Saved" / "Crashes" / "*")), key=os.path.getmtime)
+    if not dirs:
+        return ""
+    ctx = Path(dirs[-1]) / "CrashContext.runtime-xml"
+    if not ctx.exists():
+        return ""
+    m = re.search(r"<CallStack>(.*?)</CallStack>", ctx.read_text(errors="replace"), re.S)
+    txt = (m.group(1) if m else "").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").strip()
+    return txt[:max_chars]
 
 
 def smoke_cmd(lab: Lab):
