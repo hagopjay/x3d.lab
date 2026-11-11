@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import signal
+import re
 import subprocess
 import threading
 import time
@@ -160,18 +161,32 @@ def free_port(port: int) -> list[int]:
 
 def mcp_log_classifier() -> Callable[[str], str]:
     """Levels for x3d_mcp's log: per-request chatter is DEBUG, and so is the traceback mcp 1.x prints when a
-    client simply closes its session ('Error in standalone SSE writer' ... ClosedResourceError)."""
-    state = {"benign": False}
+    client simply closes its session ('Error in standalone SSE writer' ... ClosedResourceError).
+
+    The server logs through rich, which wraps the message into a narrow column ("Error in standalone SSE" /
+    "writer") and draws the traceback as an indented box, so: match the start of the phrase, keep everything until
+    the closing ClosedResourceError line or the next log record (a line that starts with a level name) as DEBUG,
+    and never swallow more than MAX_BENIGN lines."""
+    state = {"benign": 0}
     chatter = ("Processing request of type", "Created new transport", "Terminating session", "StreamableHTTP session manager")
+    start = re.compile(r"Error in standalone SSE")
+    # rich prints "[time] LEVEL message", blanks a repeated time with spaces, and indents continuation lines
+    record = re.compile(r"^\s*(\[[^\]]*\]\s*)?(DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL)\s")
+    MAX_BENIGN = 400
 
     def classify(line: str) -> str:
-        if "Error in standalone SSE writer" in line:
-            state["benign"] = True
+        if start.search(line):
+            state["benign"] = 1
             return "DEBUG"
         if state["benign"]:
-            if line.startswith("anyio.ClosedResourceError") or "ClosedResourceError" in line and not line.startswith(" "):
-                state["benign"] = False
-            return "DEBUG"
+            stripped = line.strip()
+            if record.match(line) and not start.search(line):
+                state["benign"] = 0                       # a new log record: classify it normally below
+            else:
+                state["benign"] += 1
+                if stripped.endswith("ClosedResourceError") or state["benign"] > MAX_BENIGN:
+                    state["benign"] = 0
+                return "DEBUG"
         if any(c in line for c in chatter):
             return "DEBUG"
         return _guess_level(line)
