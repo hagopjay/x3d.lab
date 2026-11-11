@@ -79,6 +79,15 @@ What the fuzzer found on the pinned versions is listed in [docs/ROADMAP.md](docs
 
 Some inputs are private: the Copilot Validator Demo build and other private modules of the x3d family. Notebooks load them only with your credentials (Drive, a private release, or `GITHUB_TOKEN`) into the Colab VM, never into this repo, and every notebook runs without them.
 
+## When this repo is private
+
+Cell 1 of notebooks 01–06 installs `x3dlab` from this repo with `pip install git+https://github.com/...`. While the repo is private, Colab needs a token for that:
+
+1. On GitHub: *Settings › Developer settings › Fine-grained tokens › Generate*. Choose **only** `hagopjay/x3d.lab` and give it **Contents: Read-only**, nothing else. Set a short expiry.
+2. In Colab: the **key icon** on the left › *Add new secret* › name `GITHUB_TOKEN`, paste the token, and turn on notebook access.
+
+Cell 1 sends the token as a git header (`http.<repo url>.extraheader`, the way `actions/checkout` does it), for this one repository only. The token never appears in a URL, a command line or the cell output, and a public repo needs nothing. Other sessions' notebooks that install `x3dlab` (Unreal, the G4 rig) use the same secret.
+
 ## Develop
 
 ```bash
