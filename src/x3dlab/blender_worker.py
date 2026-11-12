@@ -333,15 +333,29 @@ def _flat_meshes():
     return sorted(m.name for m in bpy.data.meshes if len(m.polygons) >= 16 and not any(p.use_smooth for p in m.polygons))
 
 
+GLTF_EXTRAS = (
+    # Blender's glTF exporter calls loose edges and points use_mesh_edges / use_mesh_vertices ("Loose Edges", "Loose
+    # Points"). The export_loose_* names tried first until 12 Nov 2026 do not exist in Blender 5.2, so the export fell
+    # back to the next set and every X3D IndexedLineSet and PointSet vanished from the glb.
+    {"export_lights": True, "export_cameras": True, "use_mesh_edges": True, "use_mesh_vertices": True},
+    {"export_lights": True, "export_cameras": True, "export_loose_edges": True, "export_loose_points": True},
+    {"export_lights": True, "export_cameras": True},
+    {},
+)
+LAST_GLTF_EXTRAS = {}
+
+
 def _export_gltf(out, fmt):
     kw = {"filepath": out, "export_format": "GLB" if fmt == "glb" else "GLTF_SEPARATE"}
     # lights and cameras are off by default; loose edges and points too (X3D lines and point sets would vanish)
-    for extra in ({"export_lights": True, "export_cameras": True, "export_loose_edges": True, "export_loose_points": True},
-                  {"export_lights": True, "export_cameras": True}, {}):   # option names differ between Blender versions
+    for extra in GLTF_EXTRAS:                   # option names differ between Blender versions: the first one it takes
         try:
-            return bpy.ops.export_scene.gltf(**kw, **extra)
+            r = bpy.ops.export_scene.gltf(**kw, **extra)
         except TypeError:
             continue
+        LAST_GLTF_EXTRAS.clear()
+        LAST_GLTF_EXTRAS.update(extra)
+        return r
     return bpy.ops.export_scene.gltf(**kw)
 
 
@@ -367,6 +381,8 @@ def task_convert(t):
         return dict(res, error="unknown format %r" % fmt)
     res.update(export=sorted(exp), export_s=round(time.time() - t0, 3), output=out,
                bytes=os.path.getsize(out) if os.path.exists(out) else 0)
+    if fmt in ("glb", "gltf"):
+        res["export_options"] = dict(LAST_GLTF_EXTRAS)          # which option set this Blender took
     if "FINISHED" not in exp or not res["bytes"]:
         res["error"] = "export returned %s (%d bytes)" % (sorted(exp), res["bytes"])
         return res

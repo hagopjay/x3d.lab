@@ -128,3 +128,28 @@ def test_mcp_log_classifier_hides_closed_session_tracebacks():
     c3 = procs.mcp_log_classifier()                               # rich's time column: "[00:34:20]" or blanked with spaces
     assert [c3(x) for x in ["[00:34:20] ERROR    Error in standalone SSE", "                    │ frame │",
                             "           ERROR    Tool failed: boom"]] == ["DEBUG", "DEBUG", "ERROR"]
+
+
+@pytest.mark.skipif(not HAVE_BPY, reason="bpy wheel not installed (needs Python 3.13)")
+def test_convert_keeps_x3d_lines_and_points_in_the_glb(tmp_path):
+    """Blender 5.2's glTF exporter names loose edges and points use_mesh_edges / use_mesh_vertices. The convert task
+    used to ask for export_loose_* first, which 5.2 refuses, and fell back to options without them: every
+    IndexedLineSet and PointSet vanished from the glb (found 12 Nov 2026 while bringing x3d.demo scenes to Unreal)."""
+    import struct
+    from x3dlab import blender as xblender
+    scene = tmp_path / "lines.x3d"
+    scene.write_text("<?xml version='1.0' encoding='UTF-8'?><X3D profile='Full' version='4.0'><Scene>"
+                     "<Shape><Appearance><Material emissiveColor='1 0 0'/></Appearance><IndexedLineSet coordIndex='0 1 2 -1'>"
+                     "<Coordinate point='0 0 0 1 0 0 1 1 0'/></IndexedLineSet></Shape>"
+                     "<Shape><PointSet><Coordinate point='0 0 1 1 0 1'/></PointSet></Shape>"
+                     "<Shape><Box/></Shape></Scene></X3D>")
+    bl = xblender.setup()
+    out = tmp_path / "lines.glb"
+    r = bl.run([{"kind": "convert", "src": str(scene), "format": "glb", "out": str(out)}], timeout=600, label="test-convert")[0]
+    res = r.get("result") or {}
+    assert r.get("ok") and not res.get("error"), res
+    raw = out.read_bytes()
+    gltf = json.loads(raw[20:20 + struct.unpack("<I", raw[12:16])[0]])
+    modes = sorted(p.get("mode", 4) for m in gltf["meshes"] for p in m["primitives"])
+    assert 1 in modes and 0 in modes and 4 in modes, modes          # LINES, POINTS and the box's TRIANGLES
+    assert res["export_options"].get("use_mesh_edges") is True and res["export_options"].get("use_mesh_vertices") is True

@@ -11,9 +11,65 @@
 from __future__ import annotations
 
 import io
+import os
+import re
+import subprocess
 from pathlib import Path
 
 from . import compare, x3dscene
+
+BLENDER_IO_REPO = "https://github.com/hagopjay/x3d-blender-io"
+REF_OK = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$")
+
+
+def blender_io_checkout(ref, dest, repo=BLENDER_IO_REPO, timeout=600) -> dict:
+    """The X3D add-on (x3d-blender-io) at `ref` (a branch, tag or commit of the public repository) in `dest`, for
+    X3DLAB_BLENDER_IO_DIR: the Unreal notebooks can try an importer newer than x3d.lab's pin (src/x3dlab/pins.toml)
+    before the pin moves. Returns {"ok", "ref", "commit", "dir", "why"}; never raises for a bad ref."""
+    ref = (ref or "").strip()
+    if not REF_OK.match(ref) or ".." in ref:
+        return {"ok": False, "ref": ref, "why": "not a branch, tag or commit name: %r" % ref}
+    dest = Path(dest)
+    dest.mkdir(parents=True, exist_ok=True)
+
+    def git(*args):
+        return subprocess.run(["git", "-C", str(dest), *args], capture_output=True, text=True, timeout=timeout)
+    if not (dest / ".git").exists():
+        git("init", "-q")
+    git("remote", "remove", "origin")
+    git("remote", "add", "origin", str(repo))
+    r = git("fetch", "-q", "--depth", "1", "origin", ref)
+    if r.returncode:
+        return {"ok": False, "ref": ref, "why": "git fetch %s failed: %s" % (ref, (r.stderr or r.stdout).strip()[-300:])}
+    r = git("checkout", "-q", "--force", "FETCH_HEAD")
+    if r.returncode:
+        return {"ok": False, "ref": ref, "why": "checkout failed: %s" % (r.stderr or r.stdout).strip()[-300:]}
+    commit = git("rev-parse", "HEAD").stdout.strip()
+    if not (dest / "source" / "__init__.py").exists():
+        return {"ok": False, "ref": ref, "commit": commit, "why": "%s has no source/__init__.py: not the X3D add-on" % ref}
+    return {"ok": True, "ref": ref, "commit": commit, "dir": str(dest), "why": "x3d-blender-io %s at %s" % (ref, commit[:10])}
+
+
+def use_blender_io(ref, work, divisions=None, log=print) -> dict:
+    """Point x3dlab's Blender leg at an add-on ref ("pin" = x3d.lab's pins.toml) and set the primitive tessellation
+    (BLENDER_X3D_CIRCLE_DIV, read by add-ons from the import-fidelity change on). Call before x3dlab.blender.setup()."""
+    out = {"ref": ref or "pin"}
+    if divisions:
+        os.environ["BLENDER_X3D_CIRCLE_DIV"] = str(int(divisions))
+        out["circle_divisions"] = int(divisions)
+    if ref and ref.strip() and ref.strip() != "pin":
+        co = blender_io_checkout(ref, Path(work) / "x3d-blender-io")
+        out.update(co)
+        if co["ok"]:
+            os.environ["X3DLAB_BLENDER_IO_DIR"] = co["dir"]
+            log("Blender I/O add-on: %s" % co["why"])
+        else:
+            os.environ.pop("X3DLAB_BLENDER_IO_DIR", None)
+            log("⚠️ Blender I/O add-on %s not used (%s): the pinned one runs" % (ref, co["why"]))
+    else:
+        os.environ.pop("X3DLAB_BLENDER_IO_DIR", None)
+        out["ok"] = True
+    return out
 
 
 def to_gltf(bl, src, out, fmt="glb") -> dict:
