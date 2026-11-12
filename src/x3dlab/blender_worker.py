@@ -341,10 +341,13 @@ GLTF_EXTRAS = (
     # physical units) turned a DirectionalLight of 0.3 into 204.9 lux, and X_ITE and Babylon.js drew the glb
     # saturated (255) where X_ITE draws the X3D at 61 (Material) and 78 (PhysicalMaterial); with COMPAT the
     # PhysicalMaterial matches exactly (78 / 78 / 78), measured 12 Nov 2026.
+    # Renderable objects only: the add-on imports every child of a Switch and hides the ones whichChoice does not choose
+    # from the render (x3d_switch_hidden), as an X3D browser draws them. The exporter's default wrote them too: the
+    # electron cloud's hidden "Charge" sphere covered its nucleus in every glb viewer (12 Nov 2026).
     {"export_lights": True, "export_cameras": True, "use_mesh_edges": True, "use_mesh_vertices": True,
-     "export_import_convert_lighting_mode": "COMPAT"},
+     "export_import_convert_lighting_mode": "COMPAT", "use_renderable": True},
     {"export_lights": True, "export_cameras": True, "export_loose_edges": True, "export_loose_points": True,
-     "export_import_convert_lighting_mode": "COMPAT"},
+     "export_import_convert_lighting_mode": "COMPAT", "use_renderable": True},
     {"export_lights": True, "export_cameras": True},
     {},
 )
