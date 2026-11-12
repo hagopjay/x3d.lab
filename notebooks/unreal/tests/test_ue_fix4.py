@@ -78,3 +78,37 @@ def test_old_ddc_archive_still_restores(tmp_path):
         t.add(src, arcname="ddc")
     r = pipeline.ddc_restore(lab, tmp_path / "drive")
     assert r["rc"] == 0 and (lab.ddc / "a").read_text() == "old"
+
+
+L4_FAULTED = """LogVulkanRHI: Display: Found 6 Queue Families
+LogLinux: Warning: MessageBox: Cannot create a Vulkan device. Try updating your video driver to a more recent version.
+: Vulkan device creation failed: :
+LogCore: FUnixPlatformMisc::RequestExit(bForce=true, ReturnCode=1, CallSite=<NoCallSiteInfo>)"""
+
+
+def test_a_faulted_gpu_stops_every_later_job(tmp_path):
+    """11 Nov 2026, L4: a device-lost render left the GPU refusing new Vulkan devices; every later job died in 5 s
+    with rc 1 and the notebook went on with no stills."""
+    from test_ue_pipeline import FakeUnreal, make_lab
+    S = __import__("samples")
+    fake = FakeUnreal([S.UE_LOG_VULKAN_OK, L4_FAULTED, L4_FAULTED])
+    lab, drive = make_lab(tmp_path, fake)
+    pipeline.get_engine(lab, "zip", drive)
+    lab.write_project()
+    first = pipeline.smoke(lab, "smoke_cold")
+    assert first["proof"]["verdict"] == "PASS" and lab.gpu_worked
+    second = pipeline.smoke(lab, "smoke_warm")
+    assert "gpu_faulted" in [c["signature"] for c in second["proof"]["crashes"]] and "faulted" in lab.gpu_faulted
+    n = len(fake.calls)
+    third = pipeline.smoke(lab, "again")
+    assert third["killed"] == "gpu faulted" and len(fake.calls) == n          # not even launched
+
+
+def test_cannot_create_device_on_a_fresh_runtime_is_not_called_faulted(tmp_path):
+    from test_ue_pipeline import FakeUnreal, make_lab
+    fake = FakeUnreal([L4_FAULTED] * 5)
+    lab, drive = make_lab(tmp_path, fake)
+    pipeline.get_engine(lab, "zip", drive)
+    lab.write_project()
+    pipeline.smoke(lab, "smoke_cold")
+    assert not getattr(lab, "gpu_faulted", None)                # never worked here: a setup problem, not a fault

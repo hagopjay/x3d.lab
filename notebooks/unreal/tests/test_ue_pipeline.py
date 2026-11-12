@@ -34,7 +34,7 @@ class FakeUnreal:
             self._render(job)
         Path(log_path).parent.mkdir(parents=True, exist_ok=True)
         Path(log_path).write_text(text)
-        crashed = "DEVICE_LOST" in text
+        crashed = "DEVICE_LOST" in text or "Cannot create a Vulkan device" in text
         return {"rc": 1 if crashed else 0, "seconds": 1.0, "killed": None, "gpu": {"peak_mem_mb": 1234.0}, "log": str(log_path), "cmd": cmd}
 
     def _script(self, path, job):

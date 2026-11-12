@@ -345,6 +345,13 @@ def run_unreal(lab: Lab, make_cmd, label, log_dir, timeout=7200, done_file=None,
     tried, attempts = [], []
     before = json.loads(json.dumps(lab.settings))      # a change that doesn't help is rolled back (see below)
     ok = False
+    if getattr(lab, "gpu_faulted", None):
+        # 11 Nov 2026 (L4): after a device-lost crash every later start died in 5 s with "Cannot create a Vulkan device"
+        # and the notebook went on with no stills. Say it once, loudly, and stop launching.
+        lab.log("🛑 %s skipped: %s" % (label, lab.gpu_faulted))
+        return {"rc": None, "seconds": 0.0, "killed": "gpu faulted", "log": "", "proof": {"verdict": "FAIL", "why": lab.gpu_faulted,
+                "crashes": [{"signature": "gpu_faulted"}]}, "attempts": [], "excerpt": "", "gpu": {}, "gpu_series": [],
+                "gpu_faulted": lab.gpu_faulted}
     for k in range(max_attempts):
         cmd = make_cmd(lab)
         if lab.settings["xvfb"]:
@@ -371,12 +378,20 @@ def run_unreal(lab: Lab, make_cmd, label, log_dir, timeout=7200, done_file=None,
         attempts.append(res)
         lab.attempts.append({"label": label, **{x: res.get(x) for x in ("rc", "seconds", "killed", "change")},
                              "verdict": proof.get("verdict"), "crashes": [c["signature"] for c in proof.get("crashes", [])]})
-        ok = (res.get("rc") == 0 or (done_file and os.path.exists(done_file))) and not any(
-            c["signature"] in ("device_lost", "no_vulkan_device", "root", "assert", "no_display", "bindless_rt")
-            for c in proof.get("crashes", []))
+        sigs = {c["signature"] for c in proof.get("crashes", [])}
+        if "gpu_faulted" in sigs and getattr(lab, "gpu_worked", False):
+            lab.gpu_faulted = ("the GPU is faulted since %s: Unreal cannot create a Vulkan device any more. Restart the runtime "
+                               "(Runtime > Disconnect and delete runtime) and run again; a fresh VM gets a healthy GPU" % label)
+            lab.log("🛑 " + lab.gpu_faulted)
+            res["gpu_faulted"] = lab.gpu_faulted
+            break
+        ok = (res.get("rc") == 0 or (done_file and os.path.exists(done_file))) and not sigs & {
+            "device_lost", "no_vulkan_device", "root", "assert", "no_display", "bindless_rt"}
         if need_render:
             ok = ok and proof.get("verdict") in ("PASS", "WARN")
         if ok:
+            if proof.get("verdict") == "PASS":
+                lab.gpu_worked = True                  # a later "cannot create a Vulkan device" then means a faulted GPU
             break
         nxt = uerun.next_attempt(proof, tried)
         if not nxt:

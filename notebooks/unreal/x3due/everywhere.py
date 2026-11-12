@@ -224,6 +224,13 @@ def babylon_vendor(dest) -> Path:
         return dest
     dest.mkdir(parents=True, exist_ok=True)
     npm = shutil.which("npm")
+    if not npm:                                   # Colab: the lab's own Node (x3dlab.hog installs it) brings npm along
+        try:
+            from x3dlab.hog import _node_bin
+            cand = Path(_node_bin()).with_name("npm")
+            npm = str(cand) if cand.exists() else None
+        except Exception as exc:
+            raise RuntimeError("npm is needed to fetch Babylon.js, and the lab's Node could not be installed: %s" % exc)
     if not npm:
         raise RuntimeError("npm is needed to fetch Babylon.js")
     for f, pkg in need.items():

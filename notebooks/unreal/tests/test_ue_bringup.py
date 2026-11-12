@@ -32,3 +32,23 @@ def test_up_says_what_to_do(tmp_path):
                        detect=A100, enable=lambda: {}, probe=lambda user: {"devices": [NV], "nvidia_device": NV},
                        runner=FakeUnreal([S.UE_LOG_DEVICE_LOST] * 5))
     assert not crash["ok"] and ("no engine" in crash["why"] or "6c" in crash["why"])
+
+
+def test_hwrt_off_keeps_software_lumen_on_an_rt_gpu(tmp_path):
+    """L4 (RT cores, RT extensions): with hwrt=False the engine's ray-tracing edits stay off and the project asks for no
+    ray tracing, so its shaders match the A100's cache (11 Nov 2026: hardware RT cost a 17-min recompile, a start-up
+    crash and a device-lost render)."""
+    from x3due import tier
+    L4 = lambda: tier.detect(S.SMI_QUERY["L4"], S.SMI_HEADER_A100.replace("A100-SXM4-80GB", "L4"), S.MEMINFO["A100-80"], cpus=12, disk_path="/")
+    nv = dict(NV, deviceName="NVIDIA L4", extensions=list(tier.RT_EXTENSIONS) + list(tier.RT_HELPFUL))
+    drive = tmp_path / "drive"
+    drive.mkdir()
+    fake_zip(drive / "Linux_Unreal_Engine_5.8.4.zip")
+    kw = dict(verbose=False, visual=False, gentle_mode=False, log=lambda *a: None, detect=L4, enable=lambda: {},
+              probe=lambda user: {"devices": [nv], "nvidia_device": nv}, runner=FakeUnreal(), fast_cache=False)
+    on = bringup.up(tmp_path / "w1", drive, "auto", "newest", **kw)
+    assert on["plan"]["ray_tracing"]["hw_rt"] and on["lab"].settings["ray_tracing"]
+    off = bringup.up(tmp_path / "w2", drive, "auto", "newest", hwrt=False, **kw)
+    assert off["ok"] and not off["lab"].settings["ray_tracing"]
+    assert "r.RayTracing=False" in (off["lab"].project_dir / "Config/DefaultEngine.ini").read_text() or \
+        "r.RayTracing=0" in (off["lab"].project_dir / "Config/DefaultEngine.ini").read_text()
