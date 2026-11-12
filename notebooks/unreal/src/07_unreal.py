@@ -68,6 +68,11 @@ ENGINE_VERSION = "5.8"  #@param ["5.8", "5.4", "5.9", "5.2", "newest"] {allow-in
 SUBSTRATE = "auto"  #@param ["auto", "on", "off"]
 MEGALIGHTS = "auto"  #@param ["auto", "on", "off"]
 #@markdown **SUBSTRATE** `auto` = Substrate materials from 5.7 (production-ready, Epic's default for new projects). **MEGALIGHTS** `auto` = on from 5.8 where hardware ray tracing is on. Both decide which shaders compile: set them before the first start.
+PRIMITIVE_DIVISIONS = 64  #@param {type:"slider", min:16, max:256, step:16}
+BLENDER_IO_REF = "main"  #@param {type:"string"}
+LINES_FOR_UNREAL = True  #@param {type:"boolean"}
+LINE_PX = 1.5  #@param {type:"number"}
+#@markdown **PRIMITIVE_DIVISIONS** segments for X3D Sphere, Cylinder and Cone (X3D leaves them to the browser; 64 holds up at 4K). Read by blender_IO from the *import-fidelity* change on, which also shades them smooth, maps X3D's Blinn-Phong specular and draws lines unlit. **BLENDER_IO_REF** `main` (default) = the add-on's newest main, so those fixes reach Unreal as soon as they merge; the run card records the exact commit. `pin` = the commit in x3d.lab's pins.toml (what the other notebooks use); or any branch or commit of hagopjay/x3d-blender-io. **LINES_FOR_UNREAL** gives Unreal its own copy of each glb with X3D lines and points as tubes and spheres `LINE_PX` pixels wide in a 1080-line frame, sized from the scene's viewpoints (the median one) (Unreal drops line and point primitives; X_ITE and Babylon.js keep drawing the originals).
 DRIVE_DIR = "/content/drive/MyDrive/x3dlab/unreal"  #@param {type:"string"}
 GHCR_TAG = "dev-slim-5.8.4"  #@param {type:"string"}
 SCENES = "calib, stilllife, toycar-x3d, toycar-gltf, odyssey, gobbler3"  #@param {type:"string"}
@@ -144,12 +149,13 @@ if importlib.util.find_spec("x3dlab") is None:
 if str(LAB_DIR / "src") not in sys.path:
     sys.path.insert(1, str(LAB_DIR / "src"))
 importlib.invalidate_caches()
-from x3due import (compare, convert, engine, engines, gltfstat, live, pipeline, project, report, showcase, tier, staging, uerun, vulkan,
+from x3due import (compare, convert, engine, engines, gltfstat, lines, live, pipeline, project, report, showcase, tier, staging, uerun, vulkan,
                    x3dscene)
 SC = report.Scorecard()
 CARD = {"notebook": "07_Unreal_Fidelity", "lab_commit": sh("git -C %s rev-parse --short HEAD" % LAB_DIR), "options": {
     k: globals()[k] for k in ("ENGINE_SOURCE", "ENGINE_VERSION", "SUBSTRATE", "MEGALIGHTS", "GHCR_TAG", "SCENES", "RUNG", "LOOK",
-                              "MAX_VIEWPOINTS", "COMPARE", "USD", "FORCE_HWRT")}}
+                              "MAX_VIEWPOINTS", "COMPARE", "USD", "FORCE_HWRT", "PRIMITIVE_DIVISIONS", "BLENDER_IO_REF",
+                              "LINES_FOR_UNREAL", "LINE_PX")}}
 WORK = Path("/content/x3due") if Path("/content").is_dir() else Path.home() / "x3due"
 print("✅ helpers from %s @ %s · work folder %s" % (LAB_REPO, CARD["lab_commit"], WORK))
 
@@ -739,9 +745,11 @@ from x3dlab import blender as xblender, formats
 names = [s.strip() for s in SCENES.split(",") if s.strip() in showcase.CATALOGUE]
 display(HTML("<div style='font-size:12px'>%s</div>" % showcase.licence_table(names).replace("\n", "<br>")))
 BL = None
+CARD["blender_io"] = engines.use_blender_io(BLENDER_IO_REF, WORK, PRIMITIVE_DIVISIONS)
 try:
     BL = xblender.setup()
-    print("Blender %s for the X3D → glTF leg" % BL.version)
+    print("Blender %s for the X3D → glTF leg · add-on %s · %d segments per circle" % (
+        BL.version, CARD["blender_io"].get("why", "pinned in pins.toml"), PRIMITIVE_DIVISIONS))
 except Exception as exc:
     print("⚠️ Blender unavailable: %s (X3D scenes are skipped; glTF controls still run)" % exc)
 SCN = {}
@@ -817,10 +825,24 @@ CARD["scenes"] = {n: {k: v for k, v in r.items() if k not in ("manifest",)} | {"
 IMP = {}
 def do_import(n):
     r = SCN[n]
-    res = pipeline.import_scene(LAB, n, r["glb"], "gltf", r["manifest"], shape_centres=r["manifest"].get("shape_centres"))
+    src, gstats = r["glb"], r["gltf"]
+    if LINES_FOR_UNREAL and n != "calib":
+        dst = Path(src).with_name(Path(src).stem + "_unreal.glb")
+        try:                                   # after the calibration, so the emission uses the measured K
+            lr = lines.thicken(src, dst, lines.radius_for(r["manifest"], px=LINE_PX), strength=LAB.mapping.k)
+            r["lines"] = {k: v for k, v in lr.items() if k != "skipped"} | {"skipped": lr["skipped"][:5]}
+            if lr["changed"]:
+                src, gstats = str(dst), gltfstat.stats(dst)
+                SC.add("8 import", "%s: X3D lines and points as geometry" % n, "PASS",
+                       "%d segments and %d points → %d triangles (radius %.3g m, emission × K %.3g)%s" % (
+                           lr["segments"], lr["points"], lr["triangles_added"], lr["radius"], LAB.mapping.k,
+                           "; skipped: %s" % "; ".join(lr["skipped"][:2]) if lr["skipped"] else ""))
+        except Exception as exc:
+            SC.add("8 import", "%s: X3D lines and points as geometry" % n, "WARN", "kept as lines (Unreal drops them): %s" % str(exc)[:200])
+    res = pipeline.import_scene(LAB, n, src, "gltf", r["manifest"], shape_centres=r["manifest"].get("shape_centres"))
     rep = res["report"]
     IMP[n] = res
-    rows = report.account(r["gltf"], rep, r["manifest"], rep)
+    rows = report.account(gstats, rep, r["manifest"], rep)
     st = "PASS" if rep.get("ok") else "FAIL"
     SC.add("8 import", "%s: Interchange import" % n, st, "%s · %d sequences · %.0f s%s" % (
         "ok" if rep.get("ok") else "; ".join(rep.get("errors", [])[:2]) or "failed", len(rep.get("sequences", {})), res["seconds"],
