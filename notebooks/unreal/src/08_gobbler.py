@@ -17,7 +17,11 @@
 #@title 1 · Options { display-mode: "form" }
 DRIVE_DIR = "/content/drive/MyDrive/x3dlab/unreal"  #@param {type:"string"}
 ENGINE_SOURCE = "auto"  #@param ["auto", "cache", "zip"]
-ENGINE_VERSION = "5.4"  #@param ["5.4", "5.8", "newest"] {allow-input: true}
+ENGINE_VERSION = "5.8"  #@param ["5.8", "5.4", "newest"] {allow-input: true}
+#@markdown **ENGINE_VERSION** 5.8 (the default since 12 Nov 2026; step **3a** fetches it into your Drive once). `5.4` still works: it is the engine of the first rounds.
+SUBSTRATE = "auto"  #@param ["auto", "on", "off"]
+MEGALIGHTS = "auto"  #@param ["auto", "on", "off"]
+#@markdown **SUBSTRATE** `auto` = Substrate materials from 5.7 (Epic's default for new projects; production-ready). **MEGALIGHTS** `auto` = on from 5.8 where hardware ray tracing is on (it traces its shadows), off with software Lumen. Both decide which shaders compile: change them before a first start, not between rounds.
 BAKES = "studio, neon"  #@param {type:"string"}
 #@markdown bake variants (re-import each): `studio` (as the shader), `neon` (thinner, hotter ribbons; darker, shinier gold), `gilded` (mirror gold)
 ROUND_VIEWPOINTS = "EyeToEye, Flywheel"  #@param {type:"string"}
@@ -85,8 +89,8 @@ else:
 UNREAL_DIR = LAB_DIR / "notebooks" / "unreal"
 sys.path.insert(0, str(UNREAL_DIR))
 importlib.invalidate_caches()
-from x3due import bringup, gobbler, heartbeat, pipeline, project, showcase, x3dscene
-for _m in (gobbler, project, pipeline, bringup):
+from x3due import bringup, engine, gobbler, heartbeat, pipeline, project, showcase, x3dscene
+for _m in (engine, gobbler, project, pipeline, bringup):
     importlib.reload(_m)
 WORK = Path("/content/x3due") if Path("/content").is_dir() else Path.home() / "x3due"
 STAGE = "setup"
@@ -116,22 +120,60 @@ def gpu_ok():
 print("✅ helpers %s @ %s · work %s · Drive %s" % (LAB_REPO, CARD["lab_commit"], WORK, GOB_DRIVE))
 
 # %% [markdown]
+# ## 3a · Unreal in your Drive? Paste Epic's link once
+#
+# Lists what your Drive holds for `ENGINE_VERSION` (the parallel parts, the trimmed archive, Epic's zip). When there is nothing, it asks for Epic's download link: on [unrealengine.com/linux](https://www.unrealengine.com/linux), sign in, right-click the **Linux_Unreal_Engine_5.8.x.zip** download button and copy the link. It downloads straight into `DRIVE_DIR` (about 39 GB at ~70 MB/s; nothing passes through your computer). The link goes into a hidden prompt and is never printed or saved, so saving this notebook to GitHub cannot publish it; Epic's links expire after an hour anyway. Drive needs about 60 GB free: the zip, then the trimmed engine the first run writes.
+
+# %%
+#@title 3a · Check Drive for the engine; paste Epic's link if it is missing { display-mode: "form" }
+ASK_FOR_LINK = True  #@param {type:"boolean"}
+STAGE = "engine in Drive"
+_have = pipeline.drive_engines(DRIVE_DIR, ENGINE_VERSION) if Path(DRIVE_DIR).parent.exists() else []
+if _have:
+    print("✅ Unreal %s in your Drive: %s" % (ENGINE_VERSION, " · ".join("%s (%s)" % (Path(f["path"]).name, f["kind"]) for f in _have)))
+elif not Path("/content").is_dir():
+    print("not on Colab: nothing to fetch (put Linux_Unreal_Engine_%s.x.zip in %s)" % (ENGINE_VERSION, DRIVE_DIR))
+elif ASK_FOR_LINK:
+    from getpass import getpass
+    _other = pipeline.drive_engines(DRIVE_DIR)
+    print("No Unreal %s in %s%s." % (ENGINE_VERSION, DRIVE_DIR, (" (it holds %s)" % ", ".join(sorted({f["version"] or "?" for f in _other}))) if _other else ""))
+    print("Paste Epic's download link for Linux_Unreal_Engine_%s.x.zip (Enter skips):" % ENGINE_VERSION)
+    _url = getpass("Epic download link (hidden; never saved): ").strip()
+    if _url:
+        try:
+            _got = engine.download_link(_url, DRIVE_DIR, log=print)
+        finally:
+            del _url
+        print("✅ %s · %.1f GB in %.0f s (%.0f MB/s)" % (_got["name"], _got["bytes"] / 2**30, _got["seconds"], _got["mb_s"]))
+        if _got.get("version") and not engine.pick_version([_got["name"]], ENGINE_VERSION):
+            print("⚠️ that zip is Unreal %s, not the %s that ENGINE_VERSION asks for: set ENGINE_VERSION = %r in step 1"
+                  % (_got["version"], ENGINE_VERSION, _got["version"]))
+    else:
+        del _url
+        print("skipped: step 3 will stop with 'no engine' until the zip is in Drive")
+else:
+    print("⚠️ no Unreal %s in %s: tick ASK_FOR_LINK, or put Linux_Unreal_Engine_%s.x.zip there" % (ENGINE_VERSION, DRIVE_DIR, ENGINE_VERSION))
+
+# %% [markdown]
 # ## 3 · Unreal up: GPU, Vulkan, engine, shader cache, first start
 #
-# Notebook 07's steps 3–6 in one call. The first start on a new runtime compiles Unreal's global shaders on the CPU (about 15–20 minutes; the GPU sits idle meanwhile). It restores the compiled shaders from Drive first and saves them back after a long start, so the next runtime skips most of it.
+# Notebook 07's steps 3–6 in one call. The first start on a new runtime compiles Unreal's global shaders on the CPU (about 15–20 minutes on 5.4, longer on 5.8's first start with Substrate; the GPU sits idle meanwhile). It restores the compiled shaders from Drive first and saves them back after a long start, so the next runtime skips most of it.
 
 # %%
 #@title 3 · Bring Unreal up { display-mode: "form" }
 STAGE = "bring-up"
 UP = bringup.up(WORK, DRIVE_DIR, ENGINE_SOURCE, ENGINE_VERSION, verbose=VERBOSE, visual=VISUAL, every=HEARTBEAT_S, gentle_mode=GENTLE,
-                hwrt=None if HWRT else False)
+                hwrt=None if HWRT else False, substrate=SUBSTRATE, megalights=MEGALIGHTS)
 LAB, PLAN, ENGINE, HW = UP.get("lab"), UP.get("plan"), UP.get("engine") or {}, UP.get("hw") or {}
 SMOKE = {"cold": UP["smoke"]} if UP.get("smoke") else {}
-CARD.update(hardware=HW, engine={k: v for k, v in ENGINE.items() if k != "extract"}, bringup={k: UP.get(k) for k in ("ok", "why", "steps", "seconds")})
+CARD.update(hardware=HW, engine={k: v for k, v in ENGINE.items() if k != "extract"},
+            bringup={k: UP.get(k) for k in ("ok", "why", "steps", "seconds", "features", "mcp_plugins")})
 if UP["ok"]:
     print("\n✅ Unreal %s draws on the %s · %s" % (ENGINE.get("version"), HW.get("kind"), UP["smoke"]["proof"].get("why")))
 else:
     print("\n❌ " + str(UP["why"]))
+    if str(UP.get("why") or "").startswith("no engine"):
+        print("   → run step 3a with Epic's link for Linux_Unreal_Engine_%s.x.zip, or set ENGINE_VERSION to one your Drive holds" % ENGINE_VERSION)
     if UP.get("crash_stack"):
         print("crash stack:\n" + UP["crash_stack"][:1500])
 

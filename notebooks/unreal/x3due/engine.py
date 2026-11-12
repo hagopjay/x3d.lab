@@ -94,6 +94,74 @@ def find_zips(drive_dir) -> list[str]:
     return sorted(set(hits), key=lambda f: [int(x) for x in re.findall(r"\d+", os.path.basename(f))] or [0])
 
 
+# ---------------------------------------------------------------------- Epic's download link, straight into Drive
+LINK_NAME_OK = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,120}$")
+
+
+def _disposition_name(cd: str) -> str | None:
+    from urllib.parse import unquote
+    m = re.search(r"filename\*=UTF-8''([^;]+)", cd or "", re.I) or re.search(r'filename="?([^";]+)', cd or "", re.I)
+    if not m:
+        return None
+    name = os.path.basename(unquote(m.group(1)).replace("\\", "/")).strip().strip('"')
+    return name if LINK_NAME_OK.match(name) else None
+
+
+def link_filename(url: str, header_disposition: str | None = None) -> str | None:
+    """The file name a presigned download link saves as: its response-content-disposition parameter (Epic's links are
+    S3-style), else the response's Content-Disposition header, else the last path segment. Only a bare, safe file
+    name comes back (never a path); None when none of them gives one."""
+    from urllib.parse import parse_qs, unquote, urlparse
+    u = urlparse(url)
+    name = _disposition_name((parse_qs(u.query).get("response-content-disposition") or [""])[0])
+    name = name or _disposition_name(header_disposition or "")
+    if not name:                       # a path tail only when it looks like a file (Epic's blob paths end in a bare hash)
+        tail = os.path.basename(unquote(u.path or "").replace("\\", "/")).strip()
+        name = tail if LINK_NAME_OK.match(tail) and "." in tail.strip(".") else None
+    return name
+
+
+def download_link(url, dest_dir, log=print, chunk=16 << 20, every=20.0, timeout=60, opener=None) -> dict:
+    """One file from a (presigned) link into dest_dir: written as <name>.part, renamed once every byte arrived. The
+    link is never logged, returned or written anywhere, and errors name only their class and HTTP code (Epic's links
+    carry a signature; they expire after an hour). A short read raises and keeps the .part file.
+    opener(url) -> a response with .headers and .read(n): a stand-in for tests (default urllib)."""
+    import urllib.request
+    dest_dir = Path(dest_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        resp = (opener or (lambda u: urllib.request.urlopen(u, timeout=timeout)))(url)
+    except Exception as exc:
+        code = getattr(exc, "code", None)
+        raise RuntimeError("download failed (%s%s): the link may have expired (Epic's last about an hour); copy a fresh one"
+                           % (type(exc).__name__, " %s" % code if code else "")) from None
+    t0 = last = time.time()
+    done = 0
+    with resp as r:
+        name = link_filename(url, r.headers.get("Content-Disposition")) or "Linux_Unreal_Engine_download.zip"
+        if not name.startswith("Linux_Unreal_Engine"):
+            log("⚠️ this link is for %s, not Linux_Unreal_Engine_*.zip; saving it anyway" % name)
+        dest, part = dest_dir / name, dest_dir / (name + ".part")
+        total = int(r.headers.get("Content-Length") or 0)
+        log("downloading %s%s → %s" % (name, " (%.1f GB)" % (total / 2**30) if total else "", dest_dir))
+        with open(part, "wb") as f:
+            while True:
+                b = r.read(chunk)
+                if not b:
+                    break
+                f.write(b)
+                done += len(b)
+                if time.time() - last >= every:
+                    last = time.time()
+                    log("  %.1f / %.1f GB · %.0f MB/s" % (done / 2**30, total / 2**30, done / 2**20 / max(1e-6, last - t0)))
+    if total and done != total:
+        raise RuntimeError("download incomplete: %d of %d bytes (%s kept): run again with a fresh link" % (done, total, part.name))
+    part.replace(dest)
+    secs = max(1e-6, time.time() - t0)
+    return {"name": name, "path": str(dest), "bytes": done, "seconds": round(secs, 1), "mb_s": round(done / 2**20 / secs, 1),
+            "version": version_from_name(name)}
+
+
 def excluded(rel: str, patterns) -> bool:
     rel = rel.replace("\\", "/").lstrip("/")
     return any(fnmatch.fnmatch(rel, p) or fnmatch.fnmatch("/" + rel, "*/" + p) for p in patterns)
