@@ -63,8 +63,11 @@
 # %%
 #@title 1 · Options { display-mode: "form" }
 ENGINE_SOURCE = "auto"  #@param ["auto", "cache", "zip", "ghcr"]
-ENGINE_VERSION = "5.4"  #@param ["5.4", "5.8", "5.9", "5.2", "newest"] {allow-input: true}
-#@markdown **ENGINE_VERSION** picks among the engines in your Drive (cache archives and `Linux_Unreal_Engine_*.zip`): `5.4` = any 5.4.x, `5.8.4` = exactly that, `newest` = the newest that is not a preview. Changing it switches engines (the one on the local disk is replaced). 5.4 is the default because it is the newest *stable* Linux zip seen so far; 5.9 is a preview.
+ENGINE_VERSION = "5.8"  #@param ["5.8", "5.4", "5.9", "5.2", "newest"] {allow-input: true}
+#@markdown **ENGINE_VERSION** picks among the engines in your Drive (cache archives and `Linux_Unreal_Engine_*.zip`): `5.8` = any 5.8.x, `5.8.4` = exactly that, `newest` = the newest that is not a preview. Changing it switches engines (the one on the local disk is replaced). 5.8 is the default since 12 Nov 2026 (the current release; step 5a fetches it into your Drive once); 5.4 still works; 5.9 is a preview.
+SUBSTRATE = "auto"  #@param ["auto", "on", "off"]
+MEGALIGHTS = "auto"  #@param ["auto", "on", "off"]
+#@markdown **SUBSTRATE** `auto` = Substrate materials from 5.7 (production-ready, Epic's default for new projects). **MEGALIGHTS** `auto` = on from 5.8 where hardware ray tracing is on. Both decide which shaders compile: set them before the first start.
 DRIVE_DIR = "/content/drive/MyDrive/x3dlab/unreal"  #@param {type:"string"}
 GHCR_TAG = "dev-slim-5.8.4"  #@param {type:"string"}
 SCENES = "calib, stilllife, toycar-x3d, toycar-gltf, odyssey, gobbler3"  #@param {type:"string"}
@@ -145,7 +148,8 @@ from x3due import (compare, convert, engine, engines, gltfstat, live, pipeline, 
                    x3dscene)
 SC = report.Scorecard()
 CARD = {"notebook": "07_Unreal_Fidelity", "lab_commit": sh("git -C %s rev-parse --short HEAD" % LAB_DIR), "options": {
-    k: globals()[k] for k in ("ENGINE_SOURCE", "ENGINE_VERSION", "GHCR_TAG", "SCENES", "RUNG", "LOOK", "MAX_VIEWPOINTS", "COMPARE", "USD", "FORCE_HWRT")}}
+    k: globals()[k] for k in ("ENGINE_SOURCE", "ENGINE_VERSION", "SUBSTRATE", "MEGALIGHTS", "GHCR_TAG", "SCENES", "RUNG", "LOOK",
+                              "MAX_VIEWPOINTS", "COMPARE", "USD", "FORCE_HWRT")}}
 WORK = Path("/content/x3due") if Path("/content").is_dir() else Path.home() / "x3due"
 print("✅ helpers from %s @ %s · work folder %s" % (LAB_REPO, CARD["lab_commit"], WORK))
 
@@ -287,41 +291,24 @@ print("\nray-tracing extensions:", {e: e in sh("runuser -u ue -- env -i HOME=/ho
 #@title 5a · Paste your Epic download link (hidden; never saved) { display-mode: "form" }
 DOWNLOAD = False  #@param {type:"boolean"}
 if DOWNLOAD:
-    import re as _re, urllib.parse as _up, urllib.request as _ur
     from getpass import getpass
     try:
         from google.colab import drive as _drive
         _drive.mount("/content/drive")
     except Exception:
         pass
+    _have = pipeline.drive_engines(DRIVE_DIR, ENGINE_VERSION) if Path(DRIVE_DIR).parent.exists() else []
+    if _have:
+        print("already in your Drive for %s: %s" % (ENGINE_VERSION, ", ".join(Path(f["path"]).name for f in _have)))
     _url = getpass("Epic download link (Enter to skip): ").strip()
     if _url:
-        _q = _up.parse_qs(_up.urlparse(_url).query)
-        _cd = (_q.get("response-content-disposition") or [""])[0]
-        _m = _re.search(r"filename\*=UTF-8''([^;]+)", _cd) or _re.search(r'filename="?([^";]+)', _cd)
-        _name = _up.unquote(_m.group(1)) if _m else "Linux_Unreal_Engine_download.zip"
-        if not _name.startswith("Linux_Unreal_Engine"):
-            print("⚠️ this link is for %s, not the engine zip; saving it anyway" % _name)
-        Path(DRIVE_DIR).mkdir(parents=True, exist_ok=True)
-        _dest, _part = Path(DRIVE_DIR) / _name, Path(DRIVE_DIR) / (_name + ".part")
-        print("downloading %s → %s" % (_name, DRIVE_DIR))        # the link itself is never printed
-        _t0, _last = time.time(), 0
-        with _ur.urlopen(_url, timeout=60) as _r, open(_part, "wb") as _f:
-            _total = int(_r.headers.get("Content-Length") or 0)
-            _done = 0
-            while True:
-                _b = _r.read(16 << 20)
-                if not _b:
-                    break
-                _f.write(_b); _done += len(_b)
-                if time.time() - _last > 30:
-                    _last = time.time()
-                    print("  %.1f / %.1f GB · %.0f MB/s" % (_done / 2**30, _total / 2**30, _done / 2**20 / max(1, _last - _t0)))
-        if _total and _done != _total:
-            raise SystemExit("download incomplete (%d of %d bytes): run again with a fresh link" % (_done, _total))
-        _part.rename(_dest)
-        print("✅ %s · %.1f GB in %.0f s" % (_name, _done / 2**30, time.time() - _t0))
-    del _url
+        try:
+            _got = engine.download_link(_url, DRIVE_DIR, log=print)          # the link itself is never printed
+        finally:
+            del _url
+        print("✅ %s · %.1f GB in %.0f s (%.0f MB/s)" % (_got["name"], _got["bytes"] / 2**30, _got["seconds"], _got["mb_s"]))
+    else:
+        del _url
 else:
     print("skipped (tick DOWNLOAD to paste an Epic link)")
 
@@ -389,10 +376,11 @@ elif ENGINE.get("version") and PLAN["ray_tracing"]["hw_rt"]:
     LAB.settings["ray_tracing"] = True
     CARD["engine"]["vulkan_rt_config"] = engine.enable_vulkan_rt(LAB.engine_dir, LAB.settings["bindless"])
     print("Vulkan ray tracing switched on in the engine config (Epic's documented edit; originals kept as *.x3due.orig)")
-if ENGINE.get("version") and CACHE_ENGINE and ENGINE["source"] != "drive cache" and Path(DRIVE_DIR).exists():
-    CARD["engine_cache"] = pipeline.cache_engine(LAB, DRIVE_DIR, ENGINE["version"])
+_parts_next = bool(ENGINE.get("version") and CACHE_ENGINE and Path(DRIVE_DIR).exists() and not ENGINE.get("parts"))
+if ENGINE.get("version") and CACHE_ENGINE and ENGINE["source"] != "drive cache" and Path(DRIVE_DIR).exists() and not _parts_next:
+    CARD["engine_cache"] = pipeline.cache_engine(LAB, DRIVE_DIR, ENGINE["version"])     # only when no parts follow (Drive room)
     print("Drive cache:", CARD["engine_cache"])
-if ENGINE.get("version") and CACHE_ENGINE and Path(DRIVE_DIR).exists() and not ENGINE.get("parts"):
+if _parts_next:
     print("one-time: splitting the engine cache into %d parts on Drive, so the next runtime restores it in parallel…" % engine.PARTS)
     CARD["engine_parts"] = pipeline.cache_engine_parts(LAB, DRIVE_DIR, ENGINE["version"])
     print("Drive cache (parts):", CARD["engine_parts"])
@@ -408,8 +396,17 @@ if CACHE_DDC and Path(DRIVE_DIR).exists():
     CARD["ddc_restore"] = pipeline.ddc_restore(LAB, DRIVE_DIR, ENGINE.get("version"))
     print("DDC:", CARD["ddc_restore"])
 LAB.settings["usd"] = USD == "auto"          # step 8 imports .usdc files: the USD Importer plugin must be on
+LAB.settings["engine_version"] = ENGINE.get("version")
+LAB.settings["features"] = {"substrate": SUBSTRATE, "megalights": MEGALIGHTS, "async_compute": False}
 PROJ = LAB.write_project()
 print("project %s · plugins %s · %d shader workers" % (PROJ["project"], ", ".join(p["Name"] for p in PROJ["plugins"] if p["Enabled"]), PROJ["workers"]))
+_f = PROJ.get("features") or {}
+print("features: Substrate %s (%s) · MegaLights %s (%s) · async compute off (device-lost guard)"
+      % ("on" if _f.get("substrate") else "off", _f.get("why", {}).get("substrate"), "on" if _f.get("megalights") else "off",
+         _f.get("why", {}).get("megalights")))
+CARD["features"] = _f
+if PROJ.get("mcp_plugins"):
+    print("MCP: this engine ships %s (not used by these batch runs)" % ", ".join(PROJ["mcp_plugins"]))
 if PROJ["missing_required"] and ENGINE.get("version"):
     SC.add("6 start", "required plugins in this engine", "FAIL", "missing: %s" % PROJ["missing_required"])
 SMOKE = {}

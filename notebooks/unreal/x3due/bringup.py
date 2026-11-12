@@ -1,6 +1,6 @@
 """Steps 3-6 of notebook 07 in one call, for notebooks that only need a working Unreal (08 Gobbler):
 
-    UP = bringup.up(work, drive_dir, engine_version="5.4")
+    UP = bringup.up(work, drive_dir, engine_version="5.8")
     LAB, PLAN, ENGINE = UP["lab"], UP["plan"], UP["engine"]
 
 GPU tier, Vulkan as user ue, the engine from Drive, gentle priorities, the shader cache from Drive, the project and a
@@ -33,12 +33,14 @@ def gentle(plan: dict, cpus: int, log=print) -> None:
     log("gentle: nice %d · %s shader workers" % (os.nice(0), plan.get("shader_workers")))
 
 
-def up(work, drive_dir, engine_source="auto", engine_version="5.4", verbose=True, visual=True, every=20, gentle_mode=True,
-       cache=True, fast_cache=True, hwrt=None, ghcr=(None, None, None), log=print, detect=None, enable=None, probe=None, runner=None) -> dict:
+def up(work, drive_dir, engine_source="auto", engine_version="5.8", verbose=True, visual=True, every=20, gentle_mode=True,
+       cache=True, fast_cache=True, hwrt=None, ghcr=(None, None, None), log=print, detect=None, enable=None, probe=None, runner=None,
+       substrate="auto", megalights="auto", async_compute=False) -> dict:
     """hwrt: None follows the GPU (hardware ray tracing where it has RT cores); False forces software Lumen everywhere,
     which keeps one shader cache for every GPU and avoided the L4's ray-tracing start-up crash and device-lost renders
-    (11 Nov 2026). detect / enable / probe / runner: stand-ins for tests (default: tier.detect, vulkan.enable,
-    vulkan.probe, uerun.run)."""
+    (11 Nov 2026). substrate / megalights: "auto" | "on" | "off" (project.features_for: auto = Substrate from 5.7,
+    MegaLights from 5.8 where hardware ray tracing is on). async_compute: False writes r.Vulkan.AllowAsyncCompute=0.
+    detect / enable / probe / runner: stand-ins for tests (default: tier.detect, vulkan.enable, vulkan.probe, uerun.run)."""
     t0 = time.time()
     out = {"ok": False, "why": None, "steps": {}}
     hw = (detect or tier.detect)()
@@ -80,6 +82,8 @@ def up(work, drive_dir, engine_source="auto", engine_version="5.4", verbose=True
         return out
     out["engine"] = eng
     log("engine   : Unreal %s from %s in %.0f s" % (eng.get("version"), eng["source"], eng["seconds"]))
+    lab.settings["engine_version"] = eng.get("version")
+    lab.settings["features"] = {"substrate": substrate, "megalights": megalights, "async_compute": bool(async_compute)}
     lab.settings["sm6"] = E.default_sm6(eng.get("version") or "")
     if not lab.settings["sm6"]:
         lab.settings["ray_tracing"] = False
@@ -91,14 +95,26 @@ def up(work, drive_dir, engine_source="auto", engine_version="5.4", verbose=True
         lab.settings["ray_tracing"] = False
         E.disable_vulkan_rt(lab.engine_dir)
         log("ray tracing: software Lumen%s" % (" (HWRT off by choice)" if plan["ray_tracing"]["hw_rt"] else ""))
-    if cache and eng["source"] != "drive cache" and Path(drive_dir).exists():
-        out["steps"]["engine_cache"] = pipeline.cache_engine(lab, drive_dir, eng["version"])
     fast = cache and fast_cache and Path(drive_dir).exists() and not eng.get("parts")
+    if cache and eng["source"] != "drive cache" and Path(drive_dir).exists() and not fast:
+        # the single archive only when no parts will be written: with 5.8 (a 39 GB zip, ~70 GB unpacked) both caches
+        # would need another ~20 GB of Drive, and the parts are what the next runtime restores
+        out["steps"]["engine_cache"] = pipeline.cache_engine(lab, drive_dir, eng["version"])
     if cache and Path(drive_dir).exists():
         out["steps"]["shader_cache_restore"] = pipeline.ddc_restore(lab, drive_dir, eng.get("version"))
         log("shaders  : %s" % out["steps"]["shader_cache_restore"])
     proj = lab.write_project()
     out["project"] = proj
+    f = proj.get("features") or {}
+    out["features"] = f
+    log("features : Substrate %s (%s) · MegaLights %s (%s) · async compute %s"
+        % ("on" if f.get("substrate") else "off", (f.get("why") or {}).get("substrate"),
+           "on" if f.get("megalights") else "off", (f.get("why") or {}).get("megalights"),
+           "off" if str((proj.get("system_cvars") or {}).get("r.Vulkan.AllowAsyncCompute", 1)) == "0" else "on"))
+    if proj.get("mcp_plugins"):
+        out["mcp_plugins"] = proj["mcp_plugins"]
+        log("MCP      : the engine ships %s (unused by batch runs; its editor server listens on 127.0.0.1 only)"
+            % ", ".join(proj["mcp_plugins"]))
     s = pipeline.smoke(lab, "smoke_cold")
     out["smoke"] = s
     p = s["proof"]

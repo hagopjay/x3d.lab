@@ -27,6 +27,83 @@ REQUIRED_PLUGINS = ("PythonScriptPlugin", "EditorScriptingUtilities", "Sequencer
 OPTIONAL_PLUGINS = ("Interchange", "GLTFImporter", "USDImporter", "OpenImageDenoise")
 NAME_OK = re.compile(r"^[A-Za-z0-9_]{1,60}$")
 
+# Renderer features chosen by engine version (12 Nov 2026, the owner's switch to 5.8). Each one changes which shaders
+# get compiled, so it is decided before the first start, never by a retry:
+#   substrate   Substrate materials: production-ready and on by default for new projects since 5.7. Left unset, the
+#               GBuffer format is Unreal's default for an existing project (Adaptive, the full-quality one).
+#   megalights  MegaLights: production-ready in 5.8. It needs SM6 and traces its shadow rays, so "auto" turns it on
+#               only where hardware ray tracing is on (G4, L4); on the A100 (no RT cores) it stays off.
+# EXISTS: the first version that has the setting at all (older engines get no line for it).
+FEATURE_SINCE = {"substrate": (5, 7), "megalights": (5, 8)}
+FEATURE_EXISTS = {"substrate": (5, 2), "megalights": (5, 5)}
+FEATURE_KEYS = {"substrate": "r.Substrate", "megalights": "r.MegaLights.EnableForProject"}
+# Console variables every run gets unless a caller overrides them. Async compute off: a device-lost crash faults
+# Colab's GPU for the rest of the runtime (L4, 11 Nov 2026), and r.Vulkan.AllowAsyncCompute=0 is the workaround named
+# for UE 5.8.0's device-lost crash on Linux. Offline stills lose next to nothing without it.
+DEFAULT_SYSTEM_CVARS = {"r.Vulkan.AllowAsyncCompute": 0}
+MCP_PLUGIN = re.compile(r"ModelContextProtocol|ToolsetRegistry|(?:^|[^A-Za-z])MCP", re.I)
+
+
+def _vkey(version) -> tuple:
+    return tuple(int(x) for x in re.findall(r"\d+", str(version or ""))[:3])
+
+
+def engine_version(engine_dir) -> str | None:
+    """Engine/Build/Build.version -> "5.8.4" (None when the engine or the file is missing)."""
+    try:
+        d = json.loads(Path(engine_dir, "Engine/Build/Build.version").read_text())
+        return "%s.%s.%s" % (d["MajorVersion"], d["MinorVersion"], d["PatchVersion"])
+    except Exception:
+        return None
+
+
+def _wanted(setting) -> bool | None:
+    s = str(setting).strip().lower() if setting is not None else "auto"
+    if s in ("on", "true", "1", "yes"):
+        return True
+    if s in ("off", "false", "0", "no", "none"):
+        return False
+    if s == "auto":
+        return None
+    raise ValueError("feature setting %r: use auto, on or off" % (setting,))
+
+
+def features_for(version, ray_tracing=False, substrate="auto", megalights="auto") -> dict:
+    """The renderer features for this engine version and run, with the reason for each:
+    {"substrate": bool, "megalights": bool, "why": {...}, "renderer": {ini key: "True"/"False"}}.
+    "auto" follows FEATURE_SINCE (MegaLights also needs hardware ray tracing); "on"/"off" force it. A feature the
+    engine does not have yet is off and gets no ini line, so older engines never see a key they do not know."""
+    v = _vkey(version)
+    out, why, renderer = {}, {}, {}
+    for name, setting in (("substrate", substrate), ("megalights", megalights)):
+        want = _wanted(setting)
+        exists = bool(v) and v[:2] >= FEATURE_EXISTS[name]
+        if not v:
+            on, reason = False, "engine version unknown: left at the engine's default"
+        elif not exists:
+            on, reason = False, "Unreal %s has no %s" % (version, name)
+        elif want is not None:
+            on, reason = want, "forced %s" % ("on" if want else "off")
+        elif v[:2] < FEATURE_SINCE[name]:
+            on, reason = False, "auto: production-ready from %d.%d" % FEATURE_SINCE[name]
+        elif name == "megalights" and not ray_tracing:
+            on, reason = False, "auto: needs hardware ray tracing (software Lumen on this run)"
+        else:
+            on, reason = True, "auto: production-ready in %s" % version
+        out[name], why[name] = on, reason
+        if v and exists:
+            renderer[FEATURE_KEYS[name]] = "True" if on else "False"
+    return {**out, "why": why, "renderer": renderer, "version": version}
+
+
+def mcp_plugins(engine_dir) -> list[str]:
+    """Names of the engine's MCP plugins (Epic's Unreal MCP ships with 5.8). Recorded only: commandlets do not start
+    its server, and the editor's starts on 127.0.0.1, so a batch run never depends on it."""
+    root = Path(engine_dir or "", "Engine", "Plugins")
+    if not engine_dir or not root.is_dir():
+        return []
+    return sorted({p.stem for p in root.glob("**/*.uplugin") if MCP_PLUGIN.search(p.stem)})
+
 
 def ue_name(s: str) -> str:
     """A name Unreal accepts for assets and tags."""
@@ -34,10 +111,16 @@ def ue_name(s: str) -> str:
     return ("S_" + s if s[0].isdigit() else s)[:60]
 
 
-def write(dest, engine_dir=None, plan=None, ray_tracing=False, usd=False, cpus=4, workers=None, sm6=True, extra_cvars=None) -> dict:
+def write(dest, engine_dir=None, plan=None, ray_tracing=False, usd=False, cpus=4, workers=None, sm6=True, extra_cvars=None,
+          version=None, features=None) -> dict:
     """Copy the template project to `dest` and fill it for this run. Plugins are enabled only if the engine has them
-    (a .uproject naming a plugin the engine lacks stops an unattended start)."""
+    (a .uproject naming a plugin the engine lacks stops an unattended start).
+    version: the engine's ("5.8.4"; read from engine_dir when None). features: what the run asks for,
+    {"substrate": "auto"|"on"|"off", "megalights": ..., "async_compute": False}; see features_for()."""
     dest = Path(dest)
+    asked = dict(features or {})
+    version = version or engine_version(engine_dir)
+    feats = features_for(version, ray_tracing and sm6, asked.get("substrate", "auto"), asked.get("megalights", "auto"))
     if dest.exists():
         for sub in ("Config", "Content/Python"):
             shutil.rmtree(dest / sub, ignore_errors=True)
@@ -54,10 +137,11 @@ def write(dest, engine_dir=None, plan=None, ray_tracing=False, usd=False, cpus=4
     up["Plugins"] = plugins
     (dest / "X3DLab.uproject").write_text(json.dumps(up, indent=1))
     workers = workers or max(1, cpus - 1)
-    cvars = dict(extra_cvars or {})
+    cvars = {**({} if asked.get("async_compute") else DEFAULT_SYSTEM_CVARS), **(extra_cvars or {})}
     ini = (TEMPLATE / "Config/DefaultEngine.ini").read_text()
     fill = {"SHADER_PLATFORM": "SF_VULKAN_SM6" if sm6 else "SF_VULKAN_SM5", "RAY_TRACING": "True" if ray_tracing else "False",
             "HWRT_LIGHTING_MODE": "2" if ray_tracing else "0", "UNUSED_SHADER_THREADS": str(max(0, cpus - workers)),
+            "RENDER_FEATURES": "\n".join("%s=%s" % kv for kv in sorted(feats["renderer"].items())),
             "SYSTEM_CVARS": "\n".join("%s=%s" % kv for kv in sorted(cvars.items()))}
     for k, v in fill.items():
         ini = ini.replace("{{%s}}" % k, v)
@@ -67,7 +151,8 @@ def write(dest, engine_dir=None, plan=None, ray_tracing=False, usd=False, cpus=4
     (dest / "Config/DefaultEngine.ini").write_text(ini)
     missing = [p for p in REQUIRED_PLUGINS if have.get(p) is False]
     return {"project": str(dest / "X3DLab.uproject"), "plugins": plugins, "missing_required": missing, "workers": workers,
-            "ray_tracing": ray_tracing, "sm6": sm6}
+            "ray_tracing": ray_tracing, "sm6": sm6, "version": version, "features": feats, "system_cvars": cvars,
+            "mcp_plugins": mcp_plugins(engine_dir)}
 
 
 # ---------------------------------------------------------------------- import job

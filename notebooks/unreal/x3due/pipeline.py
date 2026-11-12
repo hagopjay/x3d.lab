@@ -57,7 +57,8 @@ class Lab:
                 pools[k] = v
         return project.write(self.project_dir, self.engine_dir, ray_tracing=self.settings["ray_tracing"], usd=self.settings["usd"],
                              cpus=self.hw.get("cpus", 4), workers=self.plan.get("shader_workers"), sm6=self.settings["sm6"],
-                             extra_cvars={**pools, **self.settings["cvars"]})
+                             extra_cvars={**pools, **self.settings["cvars"]}, version=self.settings.get("engine_version"),
+                             features=self.settings.get("features"))
 
     def env(self):
         return uerun.env(str(self.home), str(self.ddc), extra=self.settings["env"])
@@ -177,6 +178,23 @@ def drive_mounted(drive_dir) -> bool:
     if str(d).startswith("/content/drive/"):
         return Path("/content/drive/MyDrive").is_dir() and d.parent.exists()
     return d.exists() or d.parent.exists()
+
+
+def drive_engines(drive_dir, want=None, settle=True) -> list[dict]:
+    """What Drive holds for an engine version, best first: the parallel parts, the trimmed archive, then Epic's zip.
+    [{"kind": "parts"|"archive"|"zip", "path", "version"}]; want as in get_engine ("5.8", "5.8.4", None = all)."""
+    d = Path(drive_dir)
+    if not d.exists():
+        return []
+    if settle and (d / "cache").exists():
+        _settle(d / "cache")
+    found = [("parts", p) for p in glob.glob(str(d / "cache" / "UE_*_parts")) if (Path(p) / "parts.json").exists()]
+    found += [("archive", p) for p in glob.glob(str(d / "cache" / "UE_*_trimmed.tar.*")) if not p.endswith(".json")]
+    found += [("zip", p) for p in E.find_zips(d)]
+    keep = set(E.pick_version([p for _, p in found], want)) if want not in (None, "") else {p for _, p in found}
+    order = {"parts": 0, "archive": 1, "zip": 2}
+    return sorted(({"kind": k, "path": p, "version": E.version_from_name(p)} for k, p in found if p in keep),
+                  key=lambda f: (order[f["kind"]], E.vkey(f["version"])))
 
 
 def _settle(folder, tries=4, wait=3.0):
