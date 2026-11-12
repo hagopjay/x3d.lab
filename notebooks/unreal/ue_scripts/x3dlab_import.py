@@ -195,6 +195,15 @@ def bounds(actor):
         return None, None
 
 
+SKY_NODE = "X3DLab_Sky"          # x3due.ucopy: the X3D Background's gradient dome, part of the glb
+
+
+def is_sky(actor, mesh=None):
+    """The gradient dome x3due.ucopy adds to the glb: by its actor label or its mesh's name."""
+    names = [attempt("label", lambda: actor.get_actor_label()) or "", mesh.get_name() if mesh is not None else ""]
+    return any(SKY_NODE.lower() in str(n).lower() for n in names)
+
+
 def measure(content_path, skip=()):
     acts = [a for a in all_actors() if a not in skip]
     by_class, meshes, centres, cams, lights, tri = {}, {}, [], [], [], 0
@@ -207,6 +216,15 @@ def measure(content_path, skip=()):
             meshes[key] = meshes.get(key, 0) + 1
             n = triangles(m)
             tri += n
+            if is_sky(a, m):
+                # the backdrop, not a shape: hidden in key stills like the flat backdrop, no shadow, and not a
+                # shape centre for the axis check
+                tag(a, "x3dlab_backdrop", "x3dlab_sky")
+                comp = attempt("sky component", lambda: a.get_editor_property("static_mesh_component"))
+                if comp is not None:
+                    setp(comp, "cast_shadow", False)
+                REPORT.setdefault("sky", []).append(attempt("label", lambda: a.get_actor_label()))
+                continue
             o, _ = bounds(a)
             if o is not None:
                 centres.append(o)

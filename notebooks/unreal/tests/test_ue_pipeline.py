@@ -131,6 +131,20 @@ def test_import_render_calibrate_end_to_end(tmp_path):
     assert m2.directional_lux(1) > C.LightMapping().directional_lux(1)
 
 
+def test_calibration_expects_lin_albedo_in_x_ites_colour_space(tmp_path):
+    from PIL import Image
+    from x3due import convert
+    p = tmp_path / "grey.png"
+    Image.new("RGB", (64, 36), (204, 204, 204)).save(p)               # sRGB 0.8: what X_ITE draws the calibration box at
+    as_is = pipeline.calibration(p, 1.2)
+    x_ite = pipeline.calibration(p, 1.2, colour_space="x_ite")
+    assert as_is["expected_linear"] == pytest.approx(0.8)
+    assert x_ite["expected_linear"] == pytest.approx(convert.srgb_to_linear(0.8))
+    assert x_ite["k_measured"] == pytest.approx(1.2, rel=0.01)       # that still is right at the assumed K
+    # read as is, the box looks too dark for 0.8 linear, and K grows by 0.8 / lin(0.8)
+    assert as_is["k_measured"] == pytest.approx(1.2 * 0.8 / convert.srgb_to_linear(0.8), rel=0.01)
+
+
 def test_calibration_rejects_saturation(tmp_path):
     from PIL import Image
     p = tmp_path / "white.png"

@@ -55,6 +55,27 @@ def test_import_script_flow(tmp_path, axes):
     assert not any("x3dlab_headlight" in a.tags for a in actors)                  # headlight="false" in the scene
 
 
+def test_import_script_treats_the_sky_dome_as_backdrop(tmp_path):
+    unreal_stub.install()
+    xml, _ = x3dscene.ensure_viewpoint_defs(SCENE)
+    m = x3dscene.manifest(xml)
+    job = project.import_job("demo", tmp_path / "demo.glb", "gltf", m, tmp_path / "import_report.json", UNREAL)
+    jp = tmp_path / "job.json"
+    jp.write_text(json.dumps(job))
+    unreal_stub.STATE.update(cmdline="UnrealEditor-Cmd X.uproject -run=pythonscript -X3DLabJob=%s" % jp,
+                             import_axes="x,z,y", import_points=m["shape_centres"], import_sky=True)
+    try:
+        _run_script(IMPORT, "x3dlab_import_sky")
+    finally:
+        unreal_stub.STATE.pop("import_sky", None)
+    rep = json.loads((tmp_path / "import_report.json").read_text())
+    assert rep["ok"], rep["errors"]
+    assert rep["sky"] == ["X3DLab_Sky"] and rep["axes"]["fits"]                  # not a shape centre
+    assert len(rep["imported"]["centres_cm"]) == len(m["shape_centres"])
+    sky = next(a for a in unreal_stub.STATE["actors"] if a.get_actor_label() == "X3DLab_Sky")
+    assert {"x3dlab_backdrop", "x3dlab_sky"} <= set(sky.tags)                    # hidden in key stills like the backdrop
+
+
 def test_import_script_reports_a_failure(tmp_path):
     unreal_stub.install()
     unreal_stub.STATE["cmdline"] = "-X3DLabJob=%s" % (tmp_path / "missing.json")

@@ -337,12 +337,58 @@ GLTF_EXTRAS = (
     # Blender's glTF exporter calls loose edges and points use_mesh_edges / use_mesh_vertices ("Loose Edges", "Loose
     # Points"). The export_loose_* names tried first until 12 Nov 2026 do not exist in Blender 5.2, so the export fell
     # back to the next set and every X3D IndexedLineSet and PointSet vanished from the glb.
-    {"export_lights": True, "export_cameras": True, "use_mesh_edges": True, "use_mesh_vertices": True},
-    {"export_lights": True, "export_cameras": True, "export_loose_edges": True, "export_loose_points": True},
+    # Light units: COMPAT ("Unitless") writes an X3D intensity as the glTF light's intensity. The default (SPEC,
+    # physical units) turned a DirectionalLight of 0.3 into 204.9 lux, and X_ITE and Babylon.js drew the glb
+    # saturated (255) where X_ITE draws the X3D at 61 (Material) and 78 (PhysicalMaterial); with COMPAT the
+    # PhysicalMaterial matches exactly (78 / 78 / 78), measured 12 Nov 2026.
+    {"export_lights": True, "export_cameras": True, "use_mesh_edges": True, "use_mesh_vertices": True,
+     "export_import_convert_lighting_mode": "COMPAT"},
+    {"export_lights": True, "export_cameras": True, "export_loose_edges": True, "export_loose_points": True,
+     "export_import_convert_lighting_mode": "COMPAT"},
     {"export_lights": True, "export_cameras": True},
     {},
 )
 LAST_GLTF_EXTRAS = {}
+
+
+def _drop_unused_coordinates():
+    """X3D draws a face set's faces and a line set's polylines, and nothing else of its Coordinate. Blender keeps
+    every point, so a point no face or polyline uses (a Coordinate shared with another shape: the Gobbler's face sets
+    share theirs with its point sets) becomes a loose vertex, and a face with fewer than three distinct corners a loose
+    edge. With the exporter's loose points and edges on (X3D lines and point sets need them), those reached the glb as
+    stray points and lines: about 1,200 points on the Gobbler (12 Nov 2026).
+
+    Removed before the export: loose vertices of meshes that have edges or faces, and loose edges of meshes that have
+    faces. A mesh of vertices only (a PointSet) and one of edges only (a line set, or a face set made only of
+    two-corner quads, which the Gobbler's shader draws as wide lines) keep theirs. Shape keys, UVs, colours and
+    custom normals go through bmesh unchanged."""
+    import bmesh
+    dropped = {"meshes": 0, "vertices": 0, "edges": 0}
+    for me in bpy.data.meshes:
+        if me.users == 0 or not len(me.vertices) or not (len(me.polygons) or len(me.edges)):
+            continue
+        has_faces = len(me.polygons) > 0
+        if has_faces:
+            loose = sum(1 for v in me.vertices) - len({i for p in me.polygons for i in p.vertices})
+            if not loose and len(me.edges) == len({k for p in me.polygons for k in p.edge_keys}):
+                continue
+        bm = bmesh.new()
+        bm.from_mesh(me)
+        n_verts = len(bm.verts)
+        edges = [e for e in bm.edges if not e.link_faces] if has_faces else []
+        if edges:
+            bmesh.ops.delete(bm, geom=edges, context='EDGES')        # may take their now-bare vertices along
+        verts = [v for v in bm.verts if not v.link_edges]
+        if verts:
+            bmesh.ops.delete(bm, geom=verts, context='VERTS')
+        if edges or verts:
+            bm.to_mesh(me)
+            me.update()
+            dropped["meshes"] += 1
+            dropped["vertices"] += n_verts - len(bm.verts)
+            dropped["edges"] += len(edges)
+        bm.free()
+    return dropped
 
 
 def _export_gltf(out, fmt):
@@ -372,6 +418,7 @@ def task_convert(t):
            "smooth_faces": _smooth_faces(), "flat_meshes": _flat_meshes()}
     t0 = time.time()
     if fmt in ("glb", "gltf"):
+        res["dropped_unused"] = _drop_unused_coordinates()      # before the loose points and edges go out
         exp = _export_gltf(out, fmt)
     elif fmt in ("usd", "usda", "usdc"):
         if not hasattr(bpy.ops.wm, "usd_export"):

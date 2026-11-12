@@ -156,7 +156,7 @@ def write(dest, engine_dir=None, plan=None, ray_tracing=False, usd=False, cpus=4
 
 
 # ---------------------------------------------------------------------- import job
-def _light(L, mapping: C.LightMapping, centre, axes, i):
+def _light(L, mapping: C.LightMapping, centre, axes, i, model="classic"):
     kind = {"DirectionalLight": "directional", "PointLight": "point", "SpotLight": "spot"}.get(L["type"])
     if kind is None:
         return None
@@ -166,13 +166,13 @@ def _light(L, mapping: C.LightMapping, centre, axes, i):
     if kind == "directional":
         out["rotation"] = C.light_dir_to_ue(L["direction"], axes)
         out["location"] = C.to_ue_point(centre, axes)
-        out["intensity"] = mapping.directional_lux(L["intensity"])
+        out["intensity"] = mapping.directional_lux(L["intensity"], model)
         out["unit"] = "lux"
     else:
         loc = L["location"]
         d = max(0.05, math.dist(loc, centre))
         out["location"] = C.to_ue_point(loc, axes)
-        out["intensity"] = mapping.point_candela(L["intensity"], tuple(L.get("attenuation", (1, 0, 0))), d)
+        out["intensity"] = mapping.point_candela(L["intensity"], tuple(L.get("attenuation", (1, 0, 0))), d, model)
         out["unit"] = "cd"
         out["matched_at_m"] = round(d, 3)
         out["radius_cm"] = max(1.0, L.get("radius", 100.0) * C.CM_PER_M)
@@ -190,7 +190,8 @@ def placements(manifest: dict, width: int, height: int, mapping: C.LightMapping,
     b = manifest.get("bounds") or ((-1, -1, -1), (1, 1, 1))
     centre = tuple((b[0][i] + b[1][i]) / 2 for i in range(3))
     radius = max(1.0, math.dist(b[0], b[1]) / 2)
-    head = {"intensity": mapping.directional_lux(1.0)} if manifest.get("headlight", True) else None
+    model = C.lighting_model(manifest)
+    head = {"intensity": mapping.directional_lux(1.0, model)} if manifest.get("headlight", True) else None
     cams = []
     for vp in manifest["viewpoints"]:
         if vp["type"] != "Viewpoint":
@@ -200,7 +201,7 @@ def placements(manifest: dict, width: int, height: int, mapping: C.LightMapping,
         fb = C.cine_filmback(hfov, width, height)
         cams.append({"name": ue_name(x3dscene.viewpoint_name(vp)), "description": vp.get("description", ""), "location": loc,
                      "rotation": rot, "hfov_deg": math.degrees(hfov), **fb, "headlight": head})
-    lights = [x for x in (_light(L, mapping, centre, axes, i) for i, L in enumerate(manifest["lights"])) if x]
+    lights = [x for x in (_light(L, mapping, centre, axes, i, model) for i, L in enumerate(manifest["lights"])) if x]
     return {"cameras": cams, "lights": lights, "centre_cm": C.to_ue_point(centre, axes),
             "backdrop_radius_cm": max(5000.0, radius * 40 * C.CM_PER_M)}
 
@@ -217,7 +218,9 @@ def import_job(scene: str, source: str, source_kind: str, manifest: dict, report
            "shared_path": "/Game/X3DLab/Shared", "report": str(report_path), "x3due_path": str(x3due_path),
            "lights_from": lights_from, "ev100": mapping.ev100,
            # the backdrop is unlit: its emissive colour is scaled by K so the picture shows the X3D colour itself
-           "background_rgb": [c * k for c in bg], "key_rgb": [c * k for c in key_rgb],
+           # (converted from sRGB first when the colour space is X_ITE's); the key stays pure magenta
+           "background_rgb": [mapping.colour(c) * k for c in bg], "key_rgb": [c * k for c in key_rgb],
+           "lighting_model": C.lighting_model(manifest), "colour_space": mapping.colour_space,
            "shape_centres_m": [list(p) for p in (shape_centres if shape_centres is not None else manifest.get("shape_centres", []))],
            "placements": {a: placements(manifest, aspect[0] * 100, aspect[1] * 100, mapping, a) for a in C.AXES}}
     validate_import_job(job)

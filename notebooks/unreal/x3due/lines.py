@@ -5,15 +5,20 @@ Unreal's glTF importer imports triangles only, so an X3D IndexedLineSet, LineSet
 glTF line or point primitive is dropped without a word (the x3d.demo scenes hold 458 IndexedLineSets and 110
 PointSets). X_ITE and Babylon.js draw lines and points natively: only the copy for Unreal is changed.
 
-    r = lines.radius_for(manifest, px=1.5, height=1080)            # metres: px pixels at the first viewpoint's distance
+    r = lines.radius_for(manifest, px=1.5, height=1080)            # metres: px pixels at the median viewpoint's distance
     rep = lines.thicken("scene.glb", "scene_unreal.glb", r, strength=K)
-    rep -> {"changed": True, "segments": 512, "points": 978, "primitives": 7, "materials": 3, "radius": 0.0021, ...}
+    rep -> {"changed": True, "segments": 512, "points": 978, "primitives": 7, "materials": 9, "colours": 9,
+            "translucent": 2, "radius": 0.0021, ...}
 
-X3D draws lines and points unlit, in emissiveColor (or the colours of a Color node), one pixel wide. The tubes keep
-that: their material has a black base, no specular and the colour as emission (glTF emissiveFactor with
-KHR_materials_emissive_strength `strength`, the notebook's exposure constant K, so the colour lands on screen as X3D
-draws it), and per-vertex colours carry over as COLOR_0. The width is a world-space radius chosen so the tubes are
-`px` pixels wide from the first viewpoint at `height` pixels: thinner close up, the way a Lumen scene needs geometry.
+X3D draws lines and points unlit, one pixel wide: in the colours of their Color or ColorRGBA node when they have one,
+else in the Material's emissiveColor (X3D 4.0, 11.4.5 and 17.2.2.3). The tubes keep that. A primitive's COLOR_0 (the
+Color node) colours each point and each line end, else the material does: an unlit material's base colour (what the
+X3D add-on writes), else the emissive colour. All colours of a glb share at most MAX_COLOURS emissive-only materials
+(black base, no specular, the colour as emissiveFactor x KHR_materials_emissive_strength `strength`, the notebook's
+exposure constant K, so the colour lands on screen as X3D draws it), alphaMode BLEND when a ColorRGBA or transparency
+asks for it. A segment between two colours is split in the middle. The width is a world-space radius chosen so the
+tubes are `px` pixels wide from the scene's viewpoints at `height` pixels: thinner close up, the way a Lumen scene
+needs geometry.
 Standard library and numpy.
 """
 
@@ -248,38 +253,112 @@ def radius_for(manifest: dict, px: float = 1.5, height: int = 1080, minimum: flo
 
 
 # ---------------------------------------------------------------------- the pass
-def _colour_of(material: dict | None) -> list:
-    """The colour X3D draws a line or point in: the emissive colour, else the base colour (lit-only content), else
-    white."""
+MAX_COLOURS = 64        # line and point colours of one glb share at most this many emissive materials
+
+
+def linear_to_srgb(c):
+    c = np.clip(np.asarray(c, np.float64), 0.0, None)
+    return np.where(c <= 0.0031308, c * 12.92, 1.055 * np.power(c, 1 / 2.4) - 0.055)
+
+
+def srgb_to_linear(c):
+    c = np.clip(np.asarray(c, np.float64), 0.0, None)
+    return np.where(c <= 0.04045, c / 12.92, np.power((c + 0.055) / 1.055, 2.4))
+
+
+def _is_unlit(material: dict | None) -> bool:
+    return "KHR_materials_unlit" in ((material or {}).get("extensions") or {})
+
+
+def _base_rgba(material: dict | None) -> list:
+    return list(((material or {}).get("pbrMetallicRoughness") or {}).get("baseColorFactor") or [1.0, 1.0, 1.0, 1.0])
+
+
+def _material_rgba(material: dict | None) -> list:
+    """The colour and alpha X3D draws a line or point set in when it has no per-vertex colours: an unlit material's
+    base colour (what the X3D add-on writes, from emissiveColor), else the emissive colour, else the base colour
+    (lit-only content), else white. Alpha counts only when the material blends (glTF alphaMode BLEND)."""
     if not material:
-        return [1.0, 1.0, 1.0]
+        return [1.0, 1.0, 1.0, 1.0]
+    base = _base_rgba(material)
+    alpha = float(base[3]) if material.get("alphaMode") == "BLEND" else 1.0
+    if _is_unlit(material):
+        return [float(c) for c in base[:3]] + [alpha]
     em = list(material.get("emissiveFactor") or [0.0, 0.0, 0.0])
     strength = (material.get("extensions") or {}).get("KHR_materials_emissive_strength", {}).get("emissiveStrength", 1.0)
     if max(em) > 0:
-        return [c * strength for c in em]
-    base = (material.get("pbrMetallicRoughness") or {}).get("baseColorFactor") or [1.0, 1.0, 1.0, 1.0]
-    return list(base[:3])
+        return [float(c) * strength for c in em] + [alpha]
+    return [float(c) for c in base[:3]] + [alpha]
 
 
-def _emissive_material(js: dict, source: int | None, strength: float, cache: dict) -> int:
-    if source in cache:
-        return cache[source]
-    mats = js.setdefault("materials", [])
-    src = mats[source] if source is not None and source < len(mats) else None
-    colour = _colour_of(src)
-    peak = max(colour) if max(colour) > 0 else 1.0
-    m = {"name": "%s_x3dlab_lines" % ((src or {}).get("name") or "Lines"),
-         "pbrMetallicRoughness": {"baseColorFactor": [0.0, 0.0, 0.0, 1.0], "metallicFactor": 0.0, "roughnessFactor": 1.0},
-         "emissiveFactor": [min(1.0, c / peak) for c in colour],
-         "extensions": {"KHR_materials_emissive_strength": {"emissiveStrength": float(peak * strength)},
-                        "KHR_materials_specular": {"specularFactor": 0.0}}}
+def _vertex_rgba(material: dict | None, col: np.ndarray) -> np.ndarray:
+    """Per-vertex RGBA from COLOR_0: an X3D Color node, which replaces emissiveColor (X3D 4.0, 11.4.5), times an
+    unlit material's base factor (glTF's rule). Alpha counts only when the material blends."""
+    c = np.asarray(col, np.float64)
+    if c.shape[1] == 3:
+        c = np.hstack([c, np.ones((len(c), 1))])
+    if _is_unlit(material):
+        c = c * np.asarray(_base_rgba(material), np.float64)[None, :]
+    if not material or material.get("alphaMode") != "BLEND":
+        c[:, 3] = 1.0
+    return c
+
+
+def palette(rgba: np.ndarray, limit: int = MAX_COLOURS):
+    """(colours, index per row): at most `limit` RGBA colours (linear) for the rows. Rows are grouped by their
+    sRGB-quantised colour (6 bits per channel, 5 for alpha, so dark colours keep their steps), the groups by a
+    count-weighted median cut when there are more than `limit`; each colour is the mean of its rows."""
+    rgba = np.asarray(rgba, np.float64).reshape(-1, 4)
+    if not len(rgba):
+        return np.zeros((0, 4)), np.zeros(0, np.int64)
+    key = np.round(np.hstack([np.clip(linear_to_srgb(rgba[:, :3]), 0, 1) * 63, np.clip(rgba[:, 3:4], 0, 1) * 31]))
+    uniq, inverse, counts = np.unique(key, axis=0, return_inverse=True, return_counts=True)
+    inverse = np.asarray(inverse).ravel()
+    boxes = [np.arange(len(uniq))]
+    while len(boxes) < limit:
+        spans = [float(np.ptp(uniq[b], axis=0).max()) if len(b) > 1 else -1.0 for b in boxes]
+        i = int(np.argmax(spans))
+        if spans[i] <= 0:
+            break
+        b = boxes.pop(i)
+        axis = int(np.argmax(np.ptp(uniq[b], axis=0)))
+        order = b[np.argsort(uniq[b, axis], kind="stable")]
+        w = np.cumsum(counts[order])
+        cut = int(min(max(np.searchsorted(w, w[-1] / 2.0), 1), len(order) - 1))
+        boxes += [order[:cut], order[cut:]]
+    box_of = np.empty(len(uniq), np.int64)
+    for k, b in enumerate(boxes):
+        box_of[b] = k
+    which = box_of[inverse]
+    n = np.bincount(which, minlength=len(boxes)).astype(np.float64)
+    colours = np.stack([np.bincount(which, weights=rgba[:, c], minlength=len(boxes)) for c in range(4)], 1) / n[:, None]
+    return colours, which                    # each colour is the mean of its rows: exact when a box holds one colour
+
+
+def _palette_material(js: dict, rgba, strength: float, cache: dict, k: int) -> int:
+    """The emissive-only material of palette colour k: black base, no specular, the colour as emission x `strength`
+    (KHR_materials_emissive_strength), alphaMode BLEND below alpha 1 (Unreal: translucent, emission x opacity)."""
+    if k in cache:
+        return cache[k]
+    colour, alpha = [float(c) for c in rgba[:3]], float(rgba[3])
+    peak = max(colour)
+    m = {"name": "x3dlab_lines_%02d" % k,
+         "pbrMetallicRoughness": {"baseColorFactor": [0.0, 0.0, 0.0, round(alpha, 4)], "metallicFactor": 0.0,
+                                  "roughnessFactor": 1.0},
+         "emissiveFactor": [min(1.0, c / peak) for c in colour] if peak > 0 else [0.0, 0.0, 0.0],
+         "extensions": {"KHR_materials_specular": {"specularFactor": 0.0}}}
+    if peak > 0:
+        m["extensions"]["KHR_materials_emissive_strength"] = {"emissiveStrength": float(peak * strength)}
+    if alpha < 0.999:
+        m["alphaMode"] = "BLEND"
     used = js.setdefault("extensionsUsed", [])
-    for ext in ("KHR_materials_emissive_strength", "KHR_materials_specular"):
+    for ext in m["extensions"]:
         if ext not in used:
             used.append(ext)
+    mats = js.setdefault("materials", [])
     mats.append(m)
-    cache[source] = len(mats) - 1
-    return cache[source]
+    cache[k] = len(mats) - 1
+    return cache[k]
 
 
 def _mesh_scales(js: dict) -> dict:
@@ -307,26 +386,38 @@ def _mat_mul(a, b):
 
 
 def thicken(src, dst, radius: float, strength: float = 1.0, tube_sides: int = 6, sphere_sub: int = 1,
-            point_scale: float = 1.25) -> dict:
+            point_scale: float = 1.25, max_colours: int = MAX_COLOURS) -> dict:
     """Write `dst`: `src` with every line and point primitive replaced by tubes and spheres. Other primitives, nodes,
-    materials and extensions are kept. Returns what changed; `dst` is written even when nothing did."""
+    materials and extensions are kept. Returns what changed; `dst` is written even when nothing did.
+
+    Colours: a primitive's COLOR_0 (an X3D Color node) gives each point and each line end its own colour, else the
+    material's (_material_rgba). All colours of the glb share at most `max_colours` emissive materials (palette); a
+    segment whose two ends differ is split in the middle, each half in its end's colour."""
     js, binary = read_glb(src)
-    rep = {"changed": False, "segments": 0, "points": 0, "primitives": 0, "materials": 0, "radius": radius,
-           "triangles_added": 0, "skipped": []}
     writer = _Writer(js, binary)
+    rep = thicken_js(js, binary, writer, radius, strength, tube_sides, sphere_sub, point_scale, max_colours)
+    rep["bytes"] = write_glb(dst, js, writer.bin)
+    return rep
+
+
+def thicken_js(js: dict, binary, writer: "_Writer", radius: float, strength: float = 1.0, tube_sides: int = 6,
+               sphere_sub: int = 1, point_scale: float = 1.25, max_colours: int = MAX_COLOURS) -> dict:
+    """thicken() on a glb already in memory (`writer` appends to its buffer); the caller writes it out."""
+    rep = {"changed": False, "segments": 0, "points": 0, "primitives": 0, "materials": 0, "colours": 0,
+           "translucent": 0, "radius": radius, "triangles_added": 0, "skipped": []}
     scales = _mesh_scales(js)
-    cache = {}
+    mats = js.get("materials", [])
+    found = []                                   # (mesh, primitive, mode, positions, indices, per-vertex RGBA or None, RGBA)
     for mi, mesh in enumerate(js.get("meshes", [])):
-        r_local = radius / scales.get(mi, 1.0)
         for prim in mesh.get("primitives", []):
             mode = prim.get("mode", 4)
             if mode not in LINE_MODES and mode != POINT_MODE:
                 continue
             attrs = prim.get("attributes", {})
-            src_material = prim.get("material")
             if "POSITION" not in attrs:
                 rep["skipped"].append("mesh %d: a %s primitive without POSITION" % (mi, LINE_MODES.get(mode, "points")))
                 continue
+            material = mats[prim["material"]] if "material" in prim and prim["material"] < len(mats) else None
             try:
                 pos = read_accessor(js, binary, attrs["POSITION"]).astype(np.float64)
                 idx = read_accessor(js, binary, prim["indices"]).ravel() if "indices" in prim else np.arange(len(pos))
@@ -334,36 +425,65 @@ def thicken(src, dst, radius: float, strength: float = 1.0, tube_sides: int = 6,
             except ValueError as exc:
                 rep["skipped"].append("mesh %d: %s" % (mi, exc))
                 continue
-            idx = idx[(idx >= 0) & (idx < len(pos))]
-            if mode == POINT_MODE:
-                which = np.asarray(idx, np.int64)
-                verts, normals, tris = spheres(pos[which], r_local * point_scale, sphere_sub)
-                per = len(verts) // max(1, len(which))
-                src_vertex = np.repeat(which, per)
-                rep["points"] += int(len(which))
-            else:
-                pairs = segments_of(mode, idx)
-                verts, normals, tris = tubes(pos[pairs[:, 0]], pos[pairs[:, 1]], r_local, tube_sides)
-                src_vertex = np.concatenate([np.repeat(pairs[:, 0:1], tube_sides, 1), np.repeat(pairs[:, 1:2], tube_sides, 1)],
-                                            axis=1).ravel() if len(pairs) else np.zeros(0, np.int64)
-                rep["segments"] += int(len(pairs))
-            if len(tris) == 0:
-                rep["skipped"].append("mesh %d: an empty %s primitive" % (mi, LINE_MODES.get(mode, "points")))
+            idx = np.asarray(idx[(idx >= 0) & (idx < len(pos))], np.int64)
+            per_vertex = _vertex_rgba(material, col) if col is not None and len(col) == len(pos) else None
+            found.append((mi, prim, mode, pos, idx, per_vertex, _material_rgba(material)))
+    rows = [f[5] if f[5] is not None else np.asarray([f[6]], np.float64) for f in found]
+    colours, which = palette(np.vstack(rows) if rows else np.zeros((0, 4)), max_colours)
+    cache, offset, replaced = {}, 0, {}
+    for (mi, prim, mode, pos, idx, per_vertex, _rgba), row in zip(found, rows):
+        k_of = which[offset:offset + len(row)]
+        offset += len(row)
+        k_vertex = k_of if per_vertex is not None else np.full(len(pos), k_of[0], np.int64)
+        r_local = radius / scales.get(mi, 1.0)
+        groups = {}                               # palette colour -> [(verts, normals, tris)]
+        if mode == POINT_MODE:
+            rep["points"] += int(len(idx))
+            for k in np.unique(k_vertex[idx]):
+                groups.setdefault(int(k), []).append(spheres(pos[idx[k_vertex[idx] == k]], r_local * point_scale, sphere_sub))
+        else:
+            pairs = segments_of(mode, idx)
+            rep["segments"] += int(len(pairs))
+            if len(pairs):
+                k0, k1 = k_vertex[pairs[:, 0]], k_vertex[pairs[:, 1]]
+                p0, p1 = pos[pairs[:, 0]], pos[pairs[:, 1]]
+                mid = (p0 + p1) / 2.0
+                same = k0 == k1
+                for k in np.unique(np.concatenate([k0, k1])):
+                    whole = same & (k0 == k)
+                    first, second = ~same & (k0 == k), ~same & (k1 == k)
+                    a = np.concatenate([p0[whole], p0[first], mid[second]])
+                    b = np.concatenate([p1[whole], mid[first], p1[second]])
+                    if len(a):
+                        groups.setdefault(int(k), []).append(tubes(a, b, r_local, tube_sides))
+        new_prims = []
+        for k, parts in sorted(groups.items()):
+            verts = np.concatenate([g[0] for g in parts])
+            normals = np.concatenate([g[1] for g in parts])
+            base, tris = 0, []
+            for g in parts:
+                tris.append(g[2] + base)
+                base += len(g[0])
+            tris = np.concatenate(tris)
+            if not len(tris):
                 continue
-            new_attrs = {"POSITION": writer.add(verts.astype(np.float32), "VEC3", 34962, minmax=True),
-                         "NORMAL": writer.add(normals.astype(np.float32), "VEC3", 34962)}
-            if col is not None and len(col):
-                c = col[src_vertex]
-                if c.shape[1] == 3:
-                    c = np.hstack([c, np.ones((len(c), 1), np.float32)])
-                new_attrs["COLOR_0"] = writer.add(c.astype(np.float32), "VEC4", 34962)
-            prim.clear()
-            prim.update({"attributes": new_attrs, "indices": writer.add(tris.astype(np.uint32).ravel()[:, None], "SCALAR", 34963),
-                         "mode": 4, "material": _emissive_material(js, src_material, strength, cache),
-                         "extras": {"x3dlab": "thickened %s" % ("points" if mode == POINT_MODE else LINE_MODES[mode])}})
-            rep["primitives"] += 1
+            new_prims.append({"attributes": {"POSITION": writer.add(verts.astype(np.float32), "VEC3", 34962, minmax=True),
+                                             "NORMAL": writer.add(normals.astype(np.float32), "VEC3", 34962)},
+                              "indices": writer.add(tris.astype(np.uint32).ravel()[:, None], "SCALAR", 34963), "mode": 4,
+                              "material": _palette_material(js, colours[k], strength, cache, k),
+                              "extras": {"x3dlab": "thickened %s" % ("points" if mode == POINT_MODE else LINE_MODES[mode])}})
             rep["triangles_added"] += int(len(tris))
-            rep["changed"] = True
+        if not new_prims:
+            rep["skipped"].append("mesh %d: an empty %s primitive" % (mi, LINE_MODES.get(mode, "points")))
+            continue
+        replaced[id(prim)] = new_prims
+        rep["primitives"] += 1
+        rep["changed"] = True
+    for mesh in js.get("meshes", []):
+        if any(id(p) in replaced for p in mesh.get("primitives", [])):
+            mesh["primitives"] = [q for p in mesh["primitives"] for q in replaced.get(id(p), [p])]
     rep["materials"] = len(cache)
-    rep["bytes"] = write_glb(dst, js, writer.bin)
+    rep["colours"] = len(colours)
+    rep["translucent"] = sum(1 for k in cache if colours[k][3] < 0.999)
+    rep["material_indices"] = sorted(cache.values())
     return rep

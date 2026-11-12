@@ -547,16 +547,19 @@ def srgb_to_linear(c):
     return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
 
 
-def calibration(png_path, k_assumed, albedo=0.8, intensity=1.0) -> dict:
+def calibration(png_path, k_assumed, albedo=0.8, intensity=1.0, colour_space="as_is") -> dict:
     """The calibration still (match look, no tone curve): the box face's centre pixel tells how bright Unreal drew
-    X3D intensity 1. Returns the measured K to use from here on (kept only if within 20x of the assumed one)."""
+    X3D intensity 1. Returns the measured K to use from here on (kept only if within 20x of the assumed one).
+    With colour_space "x_ite" the glb holds lin(albedo) and the light lin(intensity) (convert.LightMapping), so that
+    is what a correct K shows."""
     from PIL import Image
     im = Image.open(png_path).convert("RGB")
     w, h = im.size
     cx, cy, r = w // 2, h // 2, max(2, min(w, h) // 40)
     px = [im.getpixel((x, y)) for x in range(cx - r, cx + r) for y in range(cy - r, cy + r)]
     lin = sum(srgb_to_linear(sum(p) / 3.0) for p in px) / len(px)
-    expected = albedo * intensity
+    from .convert import srgb_to_linear as to_linear
+    expected = to_linear(albedo) * to_linear(intensity) if colour_space == "x_ite" else albedo * intensity
     ratio = lin / expected if expected else float("nan")
     k = k_assumed / ratio if ratio > 0 else None
     sane = k is not None and math.isfinite(k) and (k_assumed / 20 <= k <= k_assumed * 20)

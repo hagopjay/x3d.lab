@@ -139,6 +139,7 @@ def test_convert_keeps_x3d_lines_and_points_in_the_glb(tmp_path):
     from x3dlab import blender as xblender
     scene = tmp_path / "lines.x3d"
     scene.write_text("<?xml version='1.0' encoding='UTF-8'?><X3D profile='Full' version='4.0'><Scene>"
+                     "<DirectionalLight direction='0 0 -1' intensity='0.3'/>"
                      "<Shape><Appearance><Material emissiveColor='1 0 0'/></Appearance><IndexedLineSet coordIndex='0 1 2 -1'>"
                      "<Coordinate point='0 0 0 1 0 0 1 1 0'/></IndexedLineSet></Shape>"
                      "<Shape><PointSet><Coordinate point='0 0 1 1 0 1'/></PointSet></Shape>"
@@ -153,3 +154,41 @@ def test_convert_keeps_x3d_lines_and_points_in_the_glb(tmp_path):
     modes = sorted(p.get("mode", 4) for m in gltf["meshes"] for p in m["primitives"])
     assert 1 in modes and 0 in modes and 4 in modes, modes          # LINES, POINTS and the box's TRIANGLES
     assert res["export_options"].get("use_mesh_edges") is True and res["export_options"].get("use_mesh_vertices") is True
+    # lights in COMPAT units: the X3D intensity itself (SPEC, Blender's default, wrote 0.3 as 204.9 lux)
+    assert res["export_options"].get("export_import_convert_lighting_mode") == "COMPAT"
+    lights = gltf["extensions"]["KHR_lights_punctual"]["lights"]
+    assert [round(L["intensity"], 3) for L in lights] == [0.3], lights
+
+
+@pytest.mark.skipif(not HAVE_BPY, reason="bpy wheel not installed (needs Python 3.13)")
+def test_convert_drops_coordinates_no_face_or_line_uses(tmp_path):
+    """A Coordinate shared between a face set and a point set left the face set's unused points as loose vertices,
+    and faces with two distinct corners as loose edges: with loose points and edges exported, stray points reached the
+    glb (about 1,200 on the Gobbler, 12 Nov 2026). The point set keeps all its points, and a face set made only of
+    two-corner quads (drawn as wide lines by the Gobbler's shader) keeps its lines."""
+    import struct
+    from x3dlab import blender as xblender
+    scene = tmp_path / "shared.x3d"
+    scene.write_text("<?xml version='1.0' encoding='UTF-8'?><X3D profile='Full' version='4.0'><Scene>"
+                     "<Shape><Appearance><Material/></Appearance><IndexedFaceSet coordIndex='0 1 2 -1'>"
+                     "<Coordinate DEF='P' point='0 0 0 1 0 0 0 1 0 5 5 5 6 6 6'/></IndexedFaceSet></Shape>"
+                     "<Shape><Appearance><Material emissiveColor='1 1 0'/></Appearance><PointSet><Coordinate USE='P'/>"
+                     "</PointSet></Shape>"
+                     "<Shape><Appearance><Material emissiveColor='0 1 1'/></Appearance>"
+                     "<IndexedFaceSet coordIndex='0 0 1 1 -1 1 1 2 2 -1'><Coordinate point='0 3 0 1 3 0 2 3 0 9 9 9'/>"
+                     "</IndexedFaceSet></Shape>"
+                     "<Shape><Appearance><Material/></Appearance><IndexedFaceSet coordIndex='0 1 2 -1 2 2 3 3 -1'>"
+                     "<Coordinate point='0 5 0 1 5 0 0 6 0 3 6 0'/></IndexedFaceSet></Shape></Scene></X3D>")
+    bl = xblender.setup()
+    out = tmp_path / "shared.glb"
+    r = bl.run([{"kind": "convert", "src": str(scene), "format": "glb", "out": str(out)}], timeout=600, label="test-unused")[0]
+    res = r.get("result") or {}
+    assert r.get("ok") and not res.get("error"), res
+    raw = out.read_bytes()
+    gltf = json.loads(raw[20:20 + struct.unpack("<I", raw[12:16])[0]])
+    acc = gltf["accessors"]
+    by_modes = sorted(tuple(sorted(p.get("mode", 4) for p in m["primitives"])) for m in gltf["meshes"])
+    assert by_modes == [(0,), (1,), (4,), (4,)], by_modes                     # no stray points or lines
+    points = next(p for m in gltf["meshes"] for p in m["primitives"] if p.get("mode") == 0)
+    assert acc[points["attributes"]["POSITION"]]["count"] == 5                # the point set keeps every point
+    assert res["dropped_unused"] == {"meshes": 3, "vertices": 4, "edges": 1}, res["dropped_unused"]

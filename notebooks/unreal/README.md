@@ -42,13 +42,16 @@ X3D ──(x3dlab.formats / Blender: notebook 06's leg)──► glTF ──(Int
 * **Non-root:** Unreal refuses root; it runs as user `ue` with `VK_ICD_FILENAMES` pinned to NVIDIA's ICD.
 * **Proof:** every Unreal log is read: PASS only for the Vulkan RHI on an NVIDIA device; NullRHI, llvmpipe/lavapipe, crashes are named, and known crashes are retried along a ladder (async compute off, bindless for all shaders, no ray tracing, Shader Model 5).
 * **Fidelity traps handled:** X3D metres/Y-up vs Unreal centimetres/Z-up (the importer's axis mapping is *measured* from shape centres), X3D field of view on the short image side vs Unreal's horizontal, X3D unitless intensity vs lux/candela (calibrated by a rendered calibration box), X3D headlight (one per viewpoint, switched per still), Background as an unlit backdrop, scoped X3D lights becoming global.
+* **Colours and light as X_ITE draws them** (`X3D_COLOURS = "x_ite"`, 12 Nov 2026). X_ITE reads a Material's, TwoSidedMaterial's, UnlitMaterial's and Background's colours as sRGB values and lights classic Materials in display space (ρ·i), and PhysicalMaterials by PBR in linear space (ρ/π·i). The add-on converts the classic colours (`BLENDER_X3D_COLOR_SPACE=SRGB`), `convert.LightMapping` lights the scene by its majority model (`lighting_model`: classic lux = lin(i)·π·K, physical lux = i·K), the backdrop and the calibration follow. Measured with `tools/colour_check.py`: a Material emissiveColor of 0.5 is 128 in X_ITE, 186 in Babylon.js from the glb made as is, 127 converted; a DirectionalLight of 0.3 on a PhysicalMaterial of 0.8 is 78 in X_ITE and in the glb with COMPAT light units, 255 with Blender's default units.
+* **The glb Unreal is given** (`x3due/ucopy.py`): every emissive colour × K (as the backdrop), lines and points as tubes and spheres in their X3D colours (`x3due/lines.py`; Unreal drops line primitives), and a Background's sky and ground gradient as a dome inside the flat backdrop (tagged `x3dlab_backdrop`, so key stills hide it).
 
 ## Files
 
 | Path | What |
 |---|---|
 | `src/07_unreal.py` | the notebook source (percent format; `python tools/build_notebooks.py` writes `07_Unreal_Fidelity.ipynb`) |
-| `x3due/` | host-side helpers: `tier`, `vulkan`, `engine`, `oci`, `uerun`, `x3dscene`, `convert`, `gltfstat`, `project`, `pipeline`, `engines`, `compare`, `report`, `showcase` |
+| `x3due/` | host-side helpers: `tier`, `vulkan`, `engine`, `oci`, `uerun`, `x3dscene`, `convert`, `gltfstat`, `project`, `pipeline`, `engines`, `compare`, `report`, `showcase`, `lines`, `ucopy` |
+| `tools/colour_check.py` | measures X_ITE on the X3D against X_ITE and Babylon.js on the glb, for colours and light units (needs bpy, Playwright, Chrome) |
 | `ue_project/` | the Unreal project template (`X3DLab.uproject`, `Config/*.ini`, `Content/Python/init_unreal.py`, `x3dlab_render.py`: the Movie Render Queue executor) |
 | `ue_scripts/x3dlab_import.py` | the one-shot import task (Interchange, accounting, cameras, lights, backdrop, looks, sequences) |
 | `tests/` | `pytest notebooks/unreal/tests` (fixtures are labelled real or synthetic; `unreal_stub.py` stands in for the `unreal` module) |
