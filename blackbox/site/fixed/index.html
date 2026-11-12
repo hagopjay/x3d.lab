@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SKYLINE — Dispatch</title>
+  <meta name="description" content="SKYLINE dispatch console: live Atlantic-corridor fares, fleet status and ops feed for stations worldwide.">
+
+  <!-- LCP image discovered early, correctly prioritised, sized, and modern -->
+  <link rel="preload" as="image" href="/shared/img/hero-optimized.webp" fetchpriority="high">
+  <link rel="preload" as="font" type="font/woff2" href="/shared/fonts/SpaceGrotesk-700.woff2" crossorigin>
+  <link rel="preload" as="font" type="font/woff2" href="/shared/fonts/Inter-400.woff2" crossorigin>
+
+  <link rel="stylesheet" href="/site/fixed/styles.css">
+
+  <!-- third party is still third party, but it can no longer block the parser -->
+  <script src="__ALT_ORIGIN__/thirdparty/analytics.js?tag=fleet-4.9.2" async></script>
+  <script src="/site/fixed/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M2 15.5 22 8l-9.6 12-2.2-4.6L2 15.5Z" fill="#ffb020"/>
+      </svg>
+      SKYLINE
+    </div>
+    <nav class="nav" aria-label="Primary">
+      <a href="#" aria-current="page">Dispatch</a>
+      <a href="#">Fleet</a>
+      <a href="#">Crew</a>
+      <a href="#">Fares</a>
+    </nav>
+    <div class="topbar-right">
+      <span class="clock" id="clock">--:--:--Z</span>
+      <button class="icon-btn" aria-label="Search sectors">⌕</button>
+      <button class="icon-btn" aria-label="Open dispatch settings">⚙</button>
+      <div class="avatar" role="img" aria-label="Signed in as dispatcher 14"></div>
+    </div>
+  </header>
+
+  <main>
+    <div class="promo-slot" aria-live="polite"></div>
+    <section class="hero">
+      <img class="hero-img" src="/shared/img/hero-optimized.webp" width="1280" height="720"
+           alt="An airliner wing above a dawn cloud layer" fetchpriority="high" decoding="async">
+      <div class="hero-copy">
+        <span class="eyebrow"><span class="dot" aria-hidden="true"></span>Dispatch · Sector 4 · Live</span>
+        <h1>Fly the<br><em>quiet sky.</em></h1>
+        <p class="hero-sub">SKYLINE operates 214 overnight sectors across the Atlantic corridor.
+          Fares cleared here are honoured system-wide, with no rebooking penalty for weather holds.</p>
+        <div class="btn-row">
+          <button class="btn btn-primary" id="cta-search">Find fares</button>
+          <button class="btn btn-ghost" id="cta-fleet">View fleet status</button>
+        </div>
+      </div>
+    </section>
+
+    <div class="wrap">
+      <form class="search-panel" onsubmit="return false">
+        <div class="field">
+          <label for="from">From</label>
+          <input id="from" placeholder="Atlanta (ATL)" value="ATL">
+        </div>
+        <div class="field">
+          <label for="to">To</label>
+          <input id="to" placeholder="London (LHR)" value="LHR">
+        </div>
+        <div class="field">
+          <label for="date">Departure</label>
+          <input id="date" type="date" value="2026-11-14">
+        </div>
+        <div class="field">
+          <label for="pax">Passengers</label>
+          <select id="pax"><option>1 adult</option><option>2 adults</option><option>3 adults</option></select>
+        </div>
+        <button class="btn btn-primary" id="search-btn" type="submit">Search</button>
+      </form>
+
+      <div class="section-head">
+        <h2>Live fares</h2>
+        <span class="hint" id="result-count">3 fares · ATL → LHR</span>
+      </div>
+
+      <div class="cols">
+        <div class="cards"></div>
+        <aside class="feed">
+          <h3>Ops feed</h3>
+          <ul id="ops-feed">
+            <li><span class="t">04:11:02</span><span>Sector SK118 cleared for oceanic entry</span></li>
+            <li><span class="t">04:09:47</span><span>Crew rest minimum met, LHR rotation</span></li>
+            <li><span class="t">04:08:15</span><span>Fuel burn 2.1% under plan</span></li>
+          </ul>
+          <img src="/shared/img/card-1.webp" width="420" height="320" loading="lazy" decoding="async"
+               style="width:100%;height:auto;margin-top:12px;border-radius:10px" alt="Cabin view of the Atlantic corridor">
+        </aside>
+      </div>
+
+      <section class="tracker">
+        <h3>Track a flight</h3>
+        <p>Pull the live position and delay forecast for any cleared sector.</p>
+        <button class="btn btn-ghost" id="track-btn">Track flight SK118</button>
+        <div id="track-result" role="status"></div>
+      </section>
+
+      <ul class="visually-hidden" id="fare-matrix" aria-label="Fare matrix sample"></ul>
+
+      <footer>SKYLINE Air Systems · dispatch console build 2026.11.11-repaired · <a href="#">status</a></footer>
+    </div>
+  </main>
+
+  <div id="toasts" aria-live="polite"></div>
+</body>
+</html>
