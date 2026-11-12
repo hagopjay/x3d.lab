@@ -161,6 +161,30 @@ def test_convert_keeps_x3d_lines_and_points_in_the_glb(tmp_path):
 
 
 @pytest.mark.skipif(not HAVE_BPY, reason="bpy wheel not installed (needs Python 3.13)")
+def test_convert_leaves_out_what_a_switch_does_not_choose(tmp_path):
+    """A Switch draws only the child whichChoice names (none for -1). The add-on imports every child and hides the others
+    from the render; the glTF export wrote them anyway, and the electron cloud's hidden "Charge" sphere covered its
+    nucleus in X_ITE and Babylon.js (found 12 Nov 2026 comparing x3d.demo scenes with X_ITE)."""
+    import struct
+    from x3dlab import blender as xblender
+    scene = tmp_path / "switch.x3d"
+    scene.write_text("<?xml version='1.0' encoding='UTF-8'?><X3D profile='Full' version='4.0'><Scene>"
+                     "<Shape DEF='Shown'><Box/></Shape>"
+                     "<Switch whichChoice='-1'><Shape DEF='HiddenA'><Sphere/></Shape></Switch>"
+                     "<Switch whichChoice='1'><Shape DEF='HiddenB'><Cone/></Shape><Shape DEF='Chosen'><Cylinder/></Shape>"
+                     "</Switch></Scene></X3D>")
+    bl = xblender.setup()
+    out = tmp_path / "switch.glb"
+    r = bl.run([{"kind": "convert", "src": str(scene), "format": "glb", "out": str(out)}], timeout=600, label="test-switch")[0]
+    res = r.get("result") or {}
+    assert r.get("ok") and not res.get("error"), res
+    assert res["export_options"].get("use_renderable") is True
+    raw = out.read_bytes()
+    gltf = json.loads(raw[20:20 + struct.unpack("<I", raw[12:16])[0]])
+    assert len(gltf["meshes"]) == 2, [m.get("name") for m in gltf["meshes"]]      # the box and the chosen cylinder
+
+
+@pytest.mark.skipif(not HAVE_BPY, reason="bpy wheel not installed (needs Python 3.13)")
 def test_convert_drops_coordinates_no_face_or_line_uses(tmp_path):
     """A Coordinate shared between a face set and a point set left the face set's unused points as loose vertices,
     and faces with two distinct corners as loose edges: with loose points and edges exported, stray points reached the
