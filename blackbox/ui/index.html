@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="BLACKBOX — an autonomous browser forensics agent driven entirely by chrome-devtools-mcp.">
+<title>BLACKBOX · browser forensics over MCP</title>
+<link rel="stylesheet" href="/ui/styles.css">
+</head>
+<body>
+<div class="shell">
+  <header class="hud">
+    <div class="brand"><span class="diamond">◆</span> BLACKBOX <span class="sub">browser forensics · mcp</span></div>
+    <nav class="hud-links">
+      <a href="/lab/broken/" target="_blank" rel="noopener">target: broken ↗</a>
+      <a href="/lab/fixed/" target="_blank" rel="noopener">target: fixed ↗</a>
+      <a href="/lab/webgpu/" target="_blank" rel="noopener">GPU fixture ↗</a>
+      <a href="/lab/x3d/" target="_blank" rel="noopener">X3D dev console ↗</a>
+      <a href="/docs/MCP-CHEATSHEET.md" target="_blank" rel="noopener">cheatsheet ↗</a>
+    </nav>
+    <div class="hud-right">
+      <span class="elapsed" id="elapsed"></span>
+      <span class="status" id="status"><span class="dot"></span><span id="status-text">idle</span></span>
+      <button class="btn btn-primary" id="run">Run mission</button>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="mission" aria-selected="true">Mission</button>
+    <button role="tab" data-tab="findings">Findings <span class="badge" id="finding-count">0</span></button>
+    <button role="tab" data-tab="wire">MCP wire</button>
+    <button role="tab" data-tab="explorer">Explorer</button>
+    <button role="tab" data-tab="gpu">WebGPU Lab</button>
+    <button role="tab" data-tab="x3d">X3D Lab</button>
+    <button role="tab" data-tab="report">Report</button>
+  </nav>
+
+  <main>
+    <!-- ── mission ────────────────────────────────────────────────────── -->
+    <section class="view" data-tab="mission" data-active="true">
+      <div class="grid-3">
+        <div class="panel" style="display:flex; flex-direction:column; gap:12px">
+          <div>
+            <h3>Protocol <span class="right" id="phase-progress">0/0</span></h3>
+            <div class="phases" id="phases"></div>
+          </div>
+          <div>
+            <h3>Attestation</h3>
+            <div class="hint" id="attestation">waiting for handshake…</div>
+          </div>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:12px; min-height:0; height:100%">
+          <div class="panel" style="flex:1; display:flex; flex-direction:column; min-height:0">
+            <h3>Live MCP traffic <span class="right" id="stream-stats">0 calls · 0 kB</span></h3>
+            <div class="stream" id="stream"></div>
+          </div>
+          <div class="panel">
+            <h3>Before / after</h3>
+            <div class="kpis" id="kpis">
+              <div class="kpi empty"><div class="label">LCP</div><div class="vals"><span class="before">—</span><span class="arrow">→</span><span class="after">—</span></div></div>
+              <div class="kpi empty"><div class="label">CLS</div><div class="vals"><span class="before">—</span><span class="arrow">→</span><span class="after">—</span></div></div>
+              <div class="kpi empty"><div class="label">Transfer</div><div class="vals"><span class="before">—</span><span class="arrow">→</span><span class="after">—</span></div></div>
+              <div class="kpi empty"><div class="label">DOM nodes</div><div class="vals"><span class="before">—</span><span class="arrow">→</span><span class="after">—</span></div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel" style="display:flex; flex-direction:column; min-height:0; height:100%">
+          <h3>Agent log <span class="right" id="log-count"></span></h3>
+          <div class="log" id="log">
+            <div class="empty-state">No run yet. Press “Run mission”.<br><br>
+              The agent will open the target in an isolated Chrome profile, emulate Slow 4G + 4× CPU,
+              trace the load, drill into every insight, click through the UI, diff two heap snapshots,
+              run Lighthouse — then repeat the whole protocol against the repaired build and prove the deltas.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── findings ───────────────────────────────────────────────────── -->
+    <section class="view" data-tab="findings">
+      <div class="grid-2">
+        <div>
+          <div class="panel" style="margin-bottom:12px">
+            <h3>Verdict <span class="right" id="verdict-meta"></span></h3>
+            <div id="verdict" class="empty-state">No findings yet.</div>
+          </div>
+          <div id="findings-list"></div>
+        </div>
+        <div>
+          <div class="panel" style="margin-bottom:12px">
+            <h3>Fix verification — re-measured</h3>
+            <div id="proof" class="empty-state">Run a mission to produce proof.</div>
+          </div>
+          <div class="panel" style="margin-bottom:12px">
+            <h3>Evidence</h3>
+            <div id="evidence" class="empty-state">Screenshots appear here.</div>
+          </div>
+          <div class="panel">
+            <h3>Honest limits</h3>
+            <div id="limits" class="empty-state">—</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── wire ───────────────────────────────────────────────────────── -->
+    <section class="view" data-tab="wire">
+      <div class="grid-2" style="grid-template-columns: 1.4fr 1fr">
+        <div class="panel" style="max-height: calc(100vh - 150px); overflow:auto">
+          <h3>JSON-RPC frames <span class="right" id="wire-count"></span></h3>
+          <table class="data" id="wire-table">
+            <thead><tr><th>#</th><th>dir</th><th>method / tool</th><th>ms</th><th>bytes</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="panel" style="max-height: calc(100vh - 150px); overflow:auto">
+          <h3>Tool ledger</h3>
+          <table class="data" id="tool-table">
+            <thead><tr><th>tool</th><th>calls</th><th>ms</th><th>resp</th><th>~tok</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── explorer ───────────────────────────────────────────────────── -->
+    <section class="view" data-tab="explorer">
+      <div class="explorer">
+        <div class="panel tool-list" style="overflow:auto; max-height: calc(100vh - 150px)">
+          <h3>Tool surface <span class="right" id="tool-count"></span></h3>
+          <div id="tools"></div>
+        </div>
+        <div class="panel">
+          <h3>Invoke <span class="right" id="explorer-page"></span></h3>
+          <div class="row" style="margin-bottom:8px">
+            <select id="preset" class="btn btn-ghost btn-sm" style="flex:1">
+              <option value="">— load a scenario —</option>
+            </select>
+            <button class="btn btn-primary btn-sm" id="invoke">Call tool</button>
+          </div>
+          <div class="hint" id="tool-doc" style="margin-bottom:8px">Pick a tool on the left. Arguments are the server's own JSON Schema.</div>
+          <textarea id="args" spellcheck="false">{}</textarea>
+          <div class="hint" style="margin-top:6px">pageId is filled in automatically for page-scoped tools.</div>
+        </div>
+        <div class="panel" style="max-height: calc(100vh - 150px); overflow:auto">
+          <h3>Response <span class="right" id="resp-meta"></span></h3>
+          <div class="resp" id="resp">No call yet.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── WebGPU lab ──────────────────────────────────────────────────── -->
+    <section class="view" data-tab="gpu">
+      <div class="grid-2">
+        <div class="panel">
+          <h3>Host preflight <span class="right" id="gpu-host-status">not checked</span></h3>
+          <p class="hint">Independent host evidence (GPU device nodes, nvidia-smi, Vulkan, Chrome). This is not inferred from browser JavaScript.</p>
+          <div class="row" style="margin:10px 0">
+            <button class="btn btn-ghost btn-sm" id="gpu-refresh">Refresh preflight</button>
+            <button class="btn btn-primary btn-sm" id="gpu-run">Run MCP WebGPU smoke</button>
+          </div>
+          <pre id="gpu-preflight" class="resp">Select WebGPU Lab to inspect this runtime.</pre>
+          <div class="hint">The default performance mission stays GPU-disabled. This opt-in lane launches a separate Chrome profile with Vulkan/WebGPU flags.</div>
+        </div>
+        <div class="panel">
+          <h3>Compute verdict <span class="right" id="gpu-run-state">idle</span></h3>
+          <div id="gpu-progress" class="hint" style="margin:8px 0">No GPU smoke run yet.</div>
+          <div id="gpu-report-host" class="empty-state">The report will appear after the MCP-driven compute check.</div>
+          <h3 style="margin-top:14px">MCP wire calls</h3>
+          <pre id="gpu-wire" class="resp" style="max-height:220px">No calls yet.</pre>
+          <h3 style="margin-top:14px">Run summary</h3>
+          <pre id="gpu-result" class="resp" style="max-height:340px">No result yet.</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── X3D lab ─────────────────────────────────────────────────────── -->
+    <section class="view" data-tab="x3d">
+      <div class="grid-2">
+        <div class="panel">
+          <h3>Environment <span class="right" id="x3d-env-state">not checked</span></h3>
+          <p class="hint">Four lanes over the same scenes: pure X3D in X_ITE, Python generators (<code>python -m x3dlab</code>), the Blender fork through bpy, and MCP (an x3dlab MCP server next to chrome-devtools-mcp).</p>
+          <div class="row" style="margin:10px 0">
+            <button class="btn btn-ghost btn-sm" id="x3d-build">Build scenes</button>
+            <button class="btn btn-primary btn-sm" id="x3d-run">Run X3D mission</button>
+            <a class="btn btn-ghost btn-sm" href="/lab/x3d/" target="_blank" rel="noopener">Open dev console ↗</a>
+          </div>
+          <pre id="x3d-env" class="resp" style="max-height:160px">Select X3D Lab to inspect Python, bpy, the add-on and X_ITE.</pre>
+          <h3 style="margin-top:14px">Scenes</h3>
+          <div id="x3d-scenes" class="hint">Not built yet.</div>
+          <h3 style="margin-top:14px">Mission log</h3>
+          <pre id="x3d-log" class="resp" style="max-height:300px">No run yet.</pre>
+        </div>
+        <div class="panel">
+          <h3>Verdict <span class="right" id="x3d-run-state">idle</span></h3>
+          <div id="x3d-progress" class="hint" style="margin:8px 0">The mission builds the scenes, drives the x3dlab MCP server, then drives X_ITE through chrome-devtools-mcp.</div>
+          <div id="x3d-report-host" class="empty-state">The report appears here after a run.</div>
+          <h3 style="margin-top:14px">MCP wire (both servers)</h3>
+          <pre id="x3d-wire" class="resp" style="max-height:220px">No calls yet.</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── report ─────────────────────────────────────────────────────── -->
+    <section class="view" data-tab="report">
+      <div id="report-host" class="empty-state">The flight recorder is generated at the end of a run.</div>
+    </section>
+  </main>
+</div>
+<script src="/ui/app.js"></script>
+</body>
+</html>
