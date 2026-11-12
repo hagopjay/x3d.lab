@@ -96,3 +96,24 @@ def test_choose_axes_symmetric_scene_is_ambiguous():
     pts = [(1, 0, 1), (-1, 0, -1), (1, 0, -1), (-1, 0, 1)]
     got = C.choose_axes(pts, [C.to_ue_point(p, "z,-x,y") for p in pts])
     assert got["ambiguous"]
+
+
+def test_light_mapping_follows_x_ites_colour_space_and_lighting_model():
+    """Measured 12 Nov 2026 in X_ITE 16.7: a classic Material is lit in display space (rho * i), a PhysicalMaterial by
+    PBR in linear space (rho / pi * i)."""
+    lin = C.srgb_to_linear
+    as_is, x_ite = C.LightMapping(), C.LightMapping(colour_space="x_ite")
+    assert as_is.directional_lux(1.0) == pytest.approx(math.pi * as_is.k)                      # unchanged
+    assert x_ite.directional_lux(0.3) == pytest.approx(math.pi * lin(0.3) * x_ite.k)
+    assert x_ite.directional_lux(1.0) == pytest.approx(as_is.directional_lux(1.0))            # same at intensity 1
+    for m in (as_is, x_ite):
+        assert m.directional_lux(0.3, "physical") == pytest.approx(0.3 * m.k)
+        assert m.point_candela(0.5, (1, 0, 0), 2.0, "physical") == pytest.approx(0.5 * m.k * 4)
+    assert x_ite.point_candela(1.0, (0, 0, 1), 2.0) == pytest.approx(math.pi * lin(0.25) * x_ite.k * 4)
+    assert x_ite.colour(0.5) == pytest.approx(0.214, abs=1e-3) and as_is.colour(0.5) == 0.5
+    assert "lin(i)" in x_ite.describe()["rule"] and x_ite.describe()["colour_space"] == "x_ite"
+    with pytest.raises(ValueError):
+        C.LightMapping(colour_space="srgb")
+    assert C.lighting_model({"counts": {"lit_shapes": {"classic": 1, "physical": 3}}}) == "physical"
+    assert C.lighting_model({"counts": {"lit_shapes": {"classic": 2, "physical": 2}}}) == "classic"
+    assert C.lighting_model({}) == "classic"

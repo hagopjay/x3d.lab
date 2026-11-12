@@ -2,6 +2,8 @@ import json
 import math
 import struct
 
+import pytest
+
 from x3due import compare, convert as C, gltfstat, x3dscene
 
 SCENE = """<?xml version="1.0" encoding="UTF-8"?>
@@ -105,3 +107,23 @@ def test_gltfstat_counts_instancing_and_centres(tmp_path):
     assert c["cameras"] == 1 and c["lights"] == 1 and c["materials"] == 1
     assert sorted(s["shape_centres"]) == [(-2, 0, 0), (2, 0, 0)]
     assert s["cameras"][0]["position"] == (0, 0, 5)
+
+
+def test_lit_shapes_decide_the_lighting_model_and_the_backdrop_follows_the_colour_space(tmp_path):
+    from x3due import convert as C, project
+    xml = ("<X3D profile='Full' version='4.0'><Scene><Background skyColor='0.5 0.5 0.5'/>"
+           "<Viewpoint position='0 0 5'/><DirectionalLight direction='0 0 -1' intensity='0.3'/>"
+           "<Shape><Appearance><PhysicalMaterial/></Appearance><Box/></Shape>"
+           "<Shape><Appearance><PhysicalMaterial/></Appearance><Sphere/></Shape>"
+           "<Shape><Appearance><Material/></Appearance><Cone/></Shape>"
+           "<Shape><Appearance><Material emissiveColor='1 0 0'/></Appearance><PointSet><Coordinate point='0 0 0'/></PointSet></Shape>"
+           "</Scene></X3D>")
+    m = x3dscene.manifest(xml)
+    assert m["counts"]["lit_shapes"] == {"classic": 1, "physical": 2}                  # the point set is not lit
+    assert C.lighting_model(m) == "physical"
+    x_ite = C.LightMapping(colour_space="x_ite")
+    job = project.import_job("s", tmp_path / "s.glb", "gltf", m, tmp_path / "r.json", tmp_path, mapping=x_ite)
+    assert job["background_rgb"][0] == pytest.approx(C.srgb_to_linear(0.5) * x_ite.k)
+    assert job["key_rgb"] == [x_ite.k, 0.0, x_ite.k] and job["lighting_model"] == "physical"
+    light = job["placements"]["x,z,y"]["lights"][0]
+    assert light["intensity"] == pytest.approx(0.3 * x_ite.k)                             # physical: lux = i K

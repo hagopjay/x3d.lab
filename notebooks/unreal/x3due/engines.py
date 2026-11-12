@@ -50,18 +50,31 @@ def blender_io_checkout(ref, dest, repo=BLENDER_IO_REPO, timeout=600) -> dict:
     return {"ok": True, "ref": ref, "commit": commit, "dir": str(dest), "why": "x3d-blender-io %s at %s" % (ref, commit[:10])}
 
 
-def use_blender_io(ref, work, divisions=None, log=print) -> dict:
+def _reads_colour_space(addon_dir) -> bool:
+    """True when the add-on checkout reads BLENDER_X3D_COLOR_SPACE (from the x-ite-colour change on)."""
+    try:
+        return "BLENDER_X3D_COLOR_SPACE" in (Path(addon_dir) / "source" / "import_x3d.py").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+
+
+def use_blender_io(ref, work, divisions=None, log=print, colour_space=None) -> dict:
     """Point x3dlab's Blender leg at an add-on ref ("pin" = x3d.lab's pins.toml) and set the primitive tessellation
-    (BLENDER_X3D_CIRCLE_DIV, read by add-ons from the import-fidelity change on). Call before x3dlab.blender.setup()."""
+    (BLENDER_X3D_CIRCLE_DIV, read by add-ons from the import-fidelity change on) and the colour space ("x_ite": the
+    add-on converts classic X3D colours from sRGB, as X_ITE reads them; "as_is"; read from the x-ite-colour change on).
+    Call before x3dlab.blender.setup(). out["colour_space"] is what the add-on will really do: "as_is" when it can't
+    convert, so the Unreal leg treats colours the same way."""
     out = {"ref": ref or "pin"}
     if divisions:
         os.environ["BLENDER_X3D_CIRCLE_DIV"] = str(int(divisions))
         out["circle_divisions"] = int(divisions)
+    addon_dir = None
     if ref and ref.strip() and ref.strip() != "pin":
         co = blender_io_checkout(ref, Path(work) / "x3d-blender-io")
         out.update(co)
         if co["ok"]:
             os.environ["X3DLAB_BLENDER_IO_DIR"] = co["dir"]
+            addon_dir = co["dir"]
             log("Blender I/O add-on: %s" % co["why"])
         else:
             os.environ.pop("X3DLAB_BLENDER_IO_DIR", None)
@@ -69,6 +82,13 @@ def use_blender_io(ref, work, divisions=None, log=print) -> dict:
     else:
         os.environ.pop("X3DLAB_BLENDER_IO_DIR", None)
         out["ok"] = True
+    want = colour_space or "as_is"
+    able = addon_dir is not None and _reads_colour_space(addon_dir)
+    out["colour_space"] = want if (want == "as_is" or able) else "as_is"
+    if want == "x_ite" and not able:
+        log("⚠️ this add-on does not read BLENDER_X3D_COLOR_SPACE yet (x-ite-colour change): colours go through as they are")
+        out["colour_space_why"] = "the add-on does not convert colours yet"
+    os.environ["BLENDER_X3D_COLOR_SPACE"] = "SRGB" if out["colour_space"] == "x_ite" else "AS_IS"
     return out
 
 

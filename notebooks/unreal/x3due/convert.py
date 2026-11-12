@@ -173,37 +173,75 @@ def cine_filmback(hfov, width, height, sensor_width_mm=36.0):
 
 
 # ---------------------------------------------------------------------- light intensity
+COLOUR_SPACES = ("x_ite", "as_is")
+
+
+def srgb_to_linear(v: float) -> float:
+    """sRGB transfer function, extended past 1 by its power law (X3D intensities may exceed 1)."""
+    v = max(0.0, float(v))
+    return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+
+
 class LightMapping:
-    """X3D light intensity -> Unreal physical units.
+    """X3D light intensity -> Unreal physical units, so a surface lands on screen as X_ITE draws it.
 
     With manual exposure at EV100 = ev100 Unreal scales scene luminance L (cd/m2) to a pixel value L / K with
     K = 1.2 * 2**ev100 (Unreal's exposure calibration; the constant is checked, and corrected, by the calibration
     scene the notebook renders first: `measured` replaces it). A Lambertian surface of albedo rho under illuminance E
-    has L = rho * E / pi. X3D draws that surface at rho * intensity, so a directional light needs E = i * pi * K lux.
+    has L = rho * E / pi.
+
+    What X_ITE draws (measured 12 Nov 2026, X_ITE 16.7, its default LINEAR_WHEN_PHYSICAL_MATERIAL colour space):
+    * a classic Material (model "classic") is lit in display space: the pixel is rho * i itself. In linear terms that
+      is lin(rho * i) ~ lin(rho) * lin(i). With colour_space "x_ite" the glb holds lin(rho) (the add-on's SRGB colour
+      space), so the light needs E = lin(i) * pi * K; with "as_is" the glb holds rho, and E = i * pi * K matches at
+      i = 1 (the calibration box) and is too bright below.
+    * a PhysicalMaterial (model "physical") is lit by X_ITE's PBR in linear space: rho / pi * i. So E = i * K.
 
     Point and spot lights: X3D illumination is i / (a0 + a1 d + a2 d^2); Unreal's inverse-square candela light gives
     I / d^2 lux. There is no exact match unless attenuation is (0 0 1); we match at `d_ref` (the distance from the
     light to the scene's centre), so the scene's middle is lit as X3D lights it and falloff is physical elsewhere.
     """
 
-    def __init__(self, ev100: float = 0.0, measured_k: float | None = None):
+    def __init__(self, ev100: float = 0.0, measured_k: float | None = None, colour_space: str = "as_is"):
         self.ev100 = ev100
         self.k = measured_k if measured_k else 1.2 * (2.0 ** ev100)
+        if colour_space not in COLOUR_SPACES:
+            raise ValueError("colour_space must be one of %s" % ", ".join(COLOUR_SPACES))
+        self.colour_space = colour_space
 
-    def directional_lux(self, intensity):
-        return intensity * math.pi * self.k
+    def colour(self, c: float) -> float:
+        """An X3D classic colour value (Material, UnlitMaterial, Background) as the linear value Unreal should get."""
+        return srgb_to_linear(c) if self.colour_space == "x_ite" else float(c)
 
-    def point_candela(self, intensity, attenuation=(1, 0, 0), d_ref_m=1.0):
+    def _illuminance(self, i: float, model: str) -> float:
+        """X3D intensity (attenuated) -> lux / K."""
+        if model == "physical":
+            return i
+        return math.pi * self.colour(i)
+
+    def directional_lux(self, intensity, model: str = "classic"):
+        return self._illuminance(intensity, model) * self.k
+
+    def point_candela(self, intensity, attenuation=(1, 0, 0), d_ref_m=1.0, model: str = "classic"):
         a0, a1, a2 = attenuation
         d = max(d_ref_m, 1e-3)
         denom = a0 + a1 * d + a2 * d * d
         if denom <= 0:
             denom = 1.0
-        return intensity * math.pi * self.k * d * d / denom
+        return self._illuminance(intensity / denom, model) * self.k * d * d
 
     def describe(self):
-        return {"ev100": self.ev100, "k": round(self.k, 6),
-                "rule": "directional lux = i*pi*K; point/spot candela = i*pi*K*d^2/(a0+a1 d+a2 d^2) at d = light-to-centre distance"}
+        rule = ("classic: directional lux = %s*pi*K, point/spot candela = %s*pi*K*d^2 at d = light-to-centre distance; "
+                "physical: lux = i*K" % (("lin(i)", "lin(i/(a0+a1 d+a2 d^2))") if self.colour_space == "x_ite"
+                                         else ("i", "i/(a0+a1 d+a2 d^2)")))
+        return {"ev100": self.ev100, "k": round(self.k, 6), "colour_space": self.colour_space, "rule": rule}
+
+
+def lighting_model(manifest: dict) -> str:
+    """'physical' when more lit shapes use a PhysicalMaterial than a Material / TwoSidedMaterial, else 'classic'
+    (X_ITE lights the two differently; Unreal's lights are shared by all shapes, so the majority decides)."""
+    lit = (manifest.get("counts") or {}).get("lit_shapes") or manifest.get("lit_shapes") or {}
+    return "physical" if lit.get("physical", 0) > lit.get("classic", 0) else "classic"
 
 
 def spot_cones_deg(beam_width, cut_off_angle):

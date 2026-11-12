@@ -371,6 +371,11 @@ def manifest(text):
         "lights": len(w.lights), "lights_by_type": dict(collections.Counter(L["type"] for L in w.lights)),
         "viewpoints": len(w.viewpoints), "backgrounds": len(w.backgrounds), "hidden_switch_children": w.hidden_switch_children,
         "points_lines_shapes": sum(1 for s in w.shapes if s["geometry"] in POINTS_LINES),
+        # shape instances lit by a classic Material (or TwoSidedMaterial) vs a PhysicalMaterial: X_ITE lights the two
+        # differently (convert.LightMapping, convert.lighting_model)
+        "lit_shapes": {"classic": sum(1 for s in w.shapes if s["geometry"] not in POINTS_LINES
+                                      and any(m in ("Material", "TwoSidedMaterial") for m in s["materials"])),
+                       "physical": sum(1 for s in w.shapes if s["geometry"] not in POINTS_LINES and "PhysicalMaterial" in s["materials"])},
     }
     return {"version": root.get("version"), "profile": root.get("profile"), "components": comps, "meta": meta,
             "census": dict(w.census), "counts": counts, "viewpoints": w.viewpoints, "lights": w.lights,

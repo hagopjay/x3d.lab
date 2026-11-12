@@ -135,6 +135,11 @@ def import_scene(content_path, sd, params):
     for i, p in enumerate(STATE["import_points"]):
         m = Obj("StaticMesh_%d" % (i % 2), path="/Game/X/SM_%d.SM_%d" % (i % 2, i % 2), get_num_triangles=lambda lod: 12)
         STATE["actors"].append(Actor("StaticMeshActor", Vec(*convert.to_ue_point(p, STATE["import_axes"])), mesh=m))
+    if STATE.get("import_sky"):              # x3due.ucopy's gradient dome: one more mesh actor, named after its node
+        sky = Actor("StaticMeshActor", Vec(0, 0, 0), mesh=Obj("X3DLab_Sky", path="/Game/X/X3DLab_Sky.X3DLab_Sky",
+                                                              get_num_triangles=lambda lod: 16384))
+        sky.set_actor_label("X3DLab_Sky")
+        STATE["actors"].append(sky)
     STATE["actors"].append(Actor("DirectionalLight"))
     STATE["actors"].append(Actor("CineCameraActor", Vec(1, 2, 3)))
     for k in ("SM_0", "SM_1"):

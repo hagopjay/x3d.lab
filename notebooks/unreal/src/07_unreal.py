@@ -72,7 +72,10 @@ PRIMITIVE_DIVISIONS = 64  #@param {type:"slider", min:16, max:256, step:16}
 BLENDER_IO_REF = "main"  #@param {type:"string"}
 LINES_FOR_UNREAL = True  #@param {type:"boolean"}
 LINE_PX = 1.5  #@param {type:"number"}
+X3D_COLOURS = "x_ite"  #@param ["x_ite", "as_is"]
+BACKGROUND_GRADIENT = True  #@param {type:"boolean"}
 #@markdown **PRIMITIVE_DIVISIONS** segments for X3D Sphere, Cylinder and Cone (X3D leaves them to the browser; 64 holds up at 4K). Read by blender_IO from the *import-fidelity* change on, which also shades them smooth, maps X3D's Blinn-Phong specular and draws lines unlit. **BLENDER_IO_REF** `main` (default) = the add-on's newest main, so those fixes reach Unreal as soon as they merge; the run card records the exact commit. `pin` = the commit in x3d.lab's pins.toml (what the other notebooks use); or any branch or commit of hagopjay/x3d-blender-io. **LINES_FOR_UNREAL** gives Unreal its own copy of each glb with X3D lines and points as tubes and spheres `LINE_PX` pixels wide in a 1080-line frame, sized from the scene's viewpoints (the median one) (Unreal drops line and point primitives; X_ITE and Babylon.js keep drawing the originals).
+#@markdown **X3D_COLOURS** `x_ite` (default) reads classic X3D colours (Material, UnlitMaterial, Background) as sRGB values, as X_ITE and Castle do, and lights classic and PhysicalMaterial scenes the way X_ITE does: measured, a Material emissiveColor of 0.5 is 128 in X_ITE, 186 in Babylon.js and Unreal when the glb carries it as is, 127 when converted. Needs the add-on's *x-ite-colour* change (else the run falls back to `as_is` and says so). `as_is` = colours as they are (the behaviour before 12 Nov). **BACKGROUND_GRADIENT** draws an X3D Background's sky and ground gradient as a dome in Unreal (one sky colour stays the flat backdrop). Every emissive X3D colour gets K, as the backdrop does.
 DRIVE_DIR = "/content/drive/MyDrive/x3dlab/unreal"  #@param {type:"string"}
 GHCR_TAG = "dev-slim-5.8.4"  #@param {type:"string"}
 SCENES = "calib, stilllife, toycar-x3d, toycar-gltf, odyssey, gobbler3"  #@param {type:"string"}
@@ -149,13 +152,13 @@ if importlib.util.find_spec("x3dlab") is None:
 if str(LAB_DIR / "src") not in sys.path:
     sys.path.insert(1, str(LAB_DIR / "src"))
 importlib.invalidate_caches()
-from x3due import (compare, convert, engine, engines, gltfstat, lines, live, pipeline, project, report, showcase, tier, staging, uerun, vulkan,
-                   x3dscene)
+from x3due import (compare, convert, engine, engines, gltfstat, lines, live, pipeline, project, report, showcase, tier, staging, ucopy,
+                   uerun, vulkan, x3dscene)
 SC = report.Scorecard()
 CARD = {"notebook": "07_Unreal_Fidelity", "lab_commit": sh("git -C %s rev-parse --short HEAD" % LAB_DIR), "options": {
     k: globals()[k] for k in ("ENGINE_SOURCE", "ENGINE_VERSION", "SUBSTRATE", "MEGALIGHTS", "GHCR_TAG", "SCENES", "RUNG", "LOOK",
                               "MAX_VIEWPOINTS", "COMPARE", "USD", "FORCE_HWRT", "PRIMITIVE_DIVISIONS", "BLENDER_IO_REF",
-                              "LINES_FOR_UNREAL", "LINE_PX")}}
+                              "LINES_FOR_UNREAL", "LINE_PX", "X3D_COLOURS", "BACKGROUND_GRADIENT")}}
 WORK = Path("/content/x3due") if Path("/content").is_dir() else Path.home() / "x3due"
 print("✅ helpers from %s @ %s · work folder %s" % (LAB_REPO, CARD["lab_commit"], WORK))
 
@@ -745,11 +748,13 @@ from x3dlab import blender as xblender, formats
 names = [s.strip() for s in SCENES.split(",") if s.strip() in showcase.CATALOGUE]
 display(HTML("<div style='font-size:12px'>%s</div>" % showcase.licence_table(names).replace("\n", "<br>")))
 BL = None
-CARD["blender_io"] = engines.use_blender_io(BLENDER_IO_REF, WORK, PRIMITIVE_DIVISIONS)
+CARD["blender_io"] = engines.use_blender_io(BLENDER_IO_REF, WORK, PRIMITIVE_DIVISIONS, colour_space=X3D_COLOURS)
+COLOURS = CARD["blender_io"]["colour_space"]            # what the add-on really does; the Unreal leg follows it
+LAB.mapping = convert.LightMapping(ev100=LAB.mapping.ev100, measured_k=LAB.mapping.k, colour_space=COLOURS)   # K kept
 try:
     BL = xblender.setup()
-    print("Blender %s for the X3D → glTF leg · add-on %s · %d segments per circle" % (
-        BL.version, CARD["blender_io"].get("why", "pinned in pins.toml"), PRIMITIVE_DIVISIONS))
+    print("Blender %s for the X3D → glTF leg · add-on %s · %d segments per circle · colours %s" % (
+        BL.version, CARD["blender_io"].get("why", "pinned in pins.toml"), PRIMITIVE_DIVISIONS, COLOURS))
 except Exception as exc:
     print("⚠️ Blender unavailable: %s (X3D scenes are skipped; glTF controls still run)" % exc)
 SCN = {}
@@ -826,19 +831,33 @@ IMP = {}
 def do_import(n):
     r = SCN[n]
     src, gstats = r["glb"], r["gltf"]
-    if LINES_FOR_UNREAL and n != "calib":
+    if n != "calib":
         dst = Path(src).with_name(Path(src).stem + "_unreal.glb")
         try:                                   # after the calibration, so the emission uses the measured K
-            lr = lines.thicken(src, dst, lines.radius_for(r["manifest"], px=LINE_PX), strength=LAB.mapping.k)
-            r["lines"] = {k: v for k, v in lr.items() if k != "skipped"} | {"skipped": lr["skipped"][:5]}
-            if lr["changed"]:
+            uc = ucopy.unreal_copy(src, dst, r["manifest"], k=LAB.mapping.k, colour_space=LAB.mapping.colour_space,
+                                   line_radius=lines.radius_for(r["manifest"], px=LINE_PX), thicken=LINES_FOR_UNREAL,
+                                   sky=BACKGROUND_GRADIENT)
+            r["unreal_copy"] = uc
+            lr = uc["lines"]
+            if uc["changed"]:
                 src, gstats = str(dst), gltfstat.stats(dst)
+            if lr.get("changed"):
                 SC.add("8 import", "%s: X3D lines and points as geometry" % n, "PASS",
-                       "%d segments and %d points → %d triangles (radius %.3g m, emission × K %.3g)%s" % (
-                           lr["segments"], lr["points"], lr["triangles_added"], lr["radius"], LAB.mapping.k,
+                       "%d segments and %d points → %d triangles in %d colour%s%s (radius %.3g m, emission × K %.3g)%s" % (
+                           lr["segments"], lr["points"], lr["triangles_added"], lr["colours"], "" if lr["colours"] == 1 else "s",
+                           ", %d translucent" % lr["translucent"] if lr["translucent"] else "", lr["radius"], LAB.mapping.k,
                            "; skipped: %s" % "; ".join(lr["skipped"][:2]) if lr["skipped"] else ""))
+            if uc["emission_scaled"]:
+                SC.add("8 import", "%s: X3D emissive colours × K" % n, "PASS",
+                       "%d emissive materials × K %.3g, so they land on screen at their X3D value (colours: %s)" % (
+                           uc["emission_scaled"], LAB.mapping.k, uc["colour_space"]))
+            if "radius_m" in uc["sky"]:
+                SC.add("8 import", "%s: X3D Background gradient" % n, "PASS",
+                       "a dome of %d triangles at %.0f m: zenith %s · horizon %s · nadir %s" % (
+                           uc["sky"]["triangles"], uc["sky"]["radius_m"], uc["sky"]["colours"][0], uc["sky"]["colours"][2],
+                           uc["sky"]["colours"][-1]))
         except Exception as exc:
-            SC.add("8 import", "%s: X3D lines and points as geometry" % n, "WARN", "kept as lines (Unreal drops them): %s" % str(exc)[:200])
+            SC.add("8 import", "%s: the glb for Unreal" % n, "WARN", "the Foundry's glb as it is (lines dropped, emission × 1): %s" % str(exc)[:200])
     res = pipeline.import_scene(LAB, n, src, "gltf", r["manifest"], shape_centres=r["manifest"].get("shape_centres"))
     rep = res["report"]
     IMP[n] = res
@@ -865,9 +884,9 @@ if ENGINE.get("version") and "calib" in SCN and SCN["calib"].get("glb"):
     rc = pipeline.render(LAB, "calib", cams, "preview", PLAN["ladder"]["preview"], look="match", res_override=(960, 540))
     png = next((s["png"] for s in rc["stills"] if s["png"]), None)
     if png:
-        CALIB = pipeline.calibration(png, LAB.mapping.k)
+        CALIB = pipeline.calibration(png, LAB.mapping.k, colour_space=LAB.mapping.colour_space)
         if CALIB["use"]:
-            LAB.mapping = convert.LightMapping(measured_k=CALIB["k_measured"])
+            LAB.mapping = convert.LightMapping(measured_k=CALIB["k_measured"], colour_space=LAB.mapping.colour_space)
         SC.add("8 import", "light calibration (X3D intensity 1 → Unreal)", "PASS" if CALIB["use"] else "WARN",
                "box centre %.3f linear vs %.3f expected → K %s (assumed %.3f)" % (CALIB["centre_linear"], CALIB["expected_linear"],
                                                                                  CALIB["k_measured"], CALIB["k_assumed"]))
