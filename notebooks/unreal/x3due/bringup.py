@@ -34,9 +34,11 @@ def gentle(plan: dict, cpus: int, log=print) -> None:
 
 
 def up(work, drive_dir, engine_source="auto", engine_version="5.4", verbose=True, visual=True, every=20, gentle_mode=True,
-       cache=True, fast_cache=True, ghcr=(None, None, None), log=print, detect=None, enable=None, probe=None, runner=None) -> dict:
-    """detect / enable / probe / runner: stand-ins for tests (default: tier.detect, vulkan.enable, vulkan.probe,
-    uerun.run)."""
+       cache=True, fast_cache=True, hwrt=None, ghcr=(None, None, None), log=print, detect=None, enable=None, probe=None, runner=None) -> dict:
+    """hwrt: None follows the GPU (hardware ray tracing where it has RT cores); False forces software Lumen everywhere,
+    which keeps one shader cache for every GPU and avoided the L4's ray-tracing start-up crash and device-lost renders
+    (11 Nov 2026). detect / enable / probe / runner: stand-ins for tests (default: tier.detect, vulkan.enable,
+    vulkan.probe, uerun.run)."""
     t0 = time.time()
     out = {"ok": False, "why": None, "steps": {}}
     hw = (detect or tier.detect)()
@@ -82,9 +84,13 @@ def up(work, drive_dir, engine_source="auto", engine_version="5.4", verbose=True
     if not lab.settings["sm6"]:
         lab.settings["ray_tracing"] = False
         E.disable_vulkan_rt(lab.engine_dir)
-    elif plan["ray_tracing"]["hw_rt"]:
+    elif plan["ray_tracing"]["hw_rt"] and hwrt is not False:
         lab.settings["ray_tracing"] = True
         E.enable_vulkan_rt(lab.engine_dir, lab.settings["bindless"])
+    else:
+        lab.settings["ray_tracing"] = False
+        E.disable_vulkan_rt(lab.engine_dir)
+        log("ray tracing: software Lumen%s" % (" (HWRT off by choice)" if plan["ray_tracing"]["hw_rt"] else ""))
     if cache and eng["source"] != "drive cache" and Path(drive_dir).exists():
         out["steps"]["engine_cache"] = pipeline.cache_engine(lab, drive_dir, eng["version"])
     fast = cache and fast_cache and Path(drive_dir).exists() and not eng.get("parts")

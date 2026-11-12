@@ -33,6 +33,8 @@ VISUAL = True  #@param {type:"boolean"}
 HEARTBEAT_S = 20  #@param {type:"slider", min:5, max:120, step:5}
 DRIVE_HEARTBEAT = True  #@param {type:"boolean"}
 GENTLE = True  #@param {type:"boolean"}
+HWRT = False  #@param {type:"boolean"}
+#@markdown **HWRT** off (default): software Lumen on every GPU. One shader cache then serves the A100, L4 and G4 (no 17-min recompile when the GPU changes), and the L4's hardware-ray-tracing start-up crash and device-lost renders (11 Nov 2026) are avoided. The emissive Gobbler loses little without it.
 #@markdown **VERBOSE** streams Unreal's important log lines and a heartbeat while it runs; **VISUAL** shows every still as it lands and a VRAM/GPU chart per Unreal job. **DRIVE_HEARTBEAT** writes the run's status to `DRIVE_DIR/heartbeat/` every minute (data out only). **GENTLE** keeps 4 cores free and Unreal at low priority, so Colab does not recycle the VM.
 LAB_REPO = "hagopjay/x3d.lab"
 LAB_REF = "main"
@@ -101,6 +103,16 @@ if DRIVE_HEARTBEAT and Path(DRIVE_DIR).parent.exists() and not (globals().get("H
     HB_DRIVE = heartbeat.Heartbeat(DRIVE_DIR, WORK / "out", context=lambda: globals(), beat_s=60).start()
     print("💓 Drive heartbeat →", HB_DRIVE.dir)
 CARD = {"notebook": "08_Gobbler_Cinematic", "lab_commit": sh("git -C %s rev-parse --short HEAD" % LAB_DIR), "rounds": []}
+
+def gpu_ok():
+    """False (with a banner) once Unreal has found the GPU faulted: after a device-lost crash, Colab's GPU refuses new
+    Vulkan devices until the runtime restarts, and every Unreal job would fail in seconds."""
+    lab = globals().get("LAB")
+    why = getattr(lab, "gpu_faulted", None) if lab else None
+    if why:
+        display(HTML("<div style='background:#5a1010;color:#fff;padding:10px;font-size:15px'>🛑 <b>GPU faulted</b>: %s</div>" % why))
+        return False
+    return True
 print("✅ helpers %s @ %s · work %s · Drive %s" % (LAB_REPO, CARD["lab_commit"], WORK, GOB_DRIVE))
 
 # %% [markdown]
@@ -111,7 +123,8 @@ print("✅ helpers %s @ %s · work %s · Drive %s" % (LAB_REPO, CARD["lab_commit
 # %%
 #@title 3 · Bring Unreal up { display-mode: "form" }
 STAGE = "bring-up"
-UP = bringup.up(WORK, DRIVE_DIR, ENGINE_SOURCE, ENGINE_VERSION, verbose=VERBOSE, visual=VISUAL, every=HEARTBEAT_S, gentle_mode=GENTLE)
+UP = bringup.up(WORK, DRIVE_DIR, ENGINE_SOURCE, ENGINE_VERSION, verbose=VERBOSE, visual=VISUAL, every=HEARTBEAT_S, gentle_mode=GENTLE,
+                hwrt=None if HWRT else False)
 LAB, PLAN, ENGINE, HW = UP.get("lab"), UP.get("plan"), UP.get("engine") or {}, UP.get("hw") or {}
 SMOKE = {"cold": UP["smoke"]} if UP.get("smoke") else {}
 CARD.update(hardware=HW, engine={k: v for k, v in ENGINE.items() if k != "extract"}, bringup={k: UP.get(k) for k in ("ok", "why", "steps", "seconds")})
@@ -226,10 +239,13 @@ grades = {n: gobbler.with_exposure(g, EV.get(n, 0.0)) for n, g in CANDIDATES.ite
 sb = GOB_DRIVE / "scoreboard.jsonl"
 rows_sheet, scores_sheet = {}, {}
 for b in BAKES_ROUND:
+    if not gpu_ok():
+        break
     print("round %d · bake %s · %d grades × %d viewpoints in one Unreal start" % (ROUND, b, len(grades), len(cams)))
     out = pipeline.render_grades(LAB, "gob_" + b, cams, "round", rung, grades, label="r%d" % ROUND)
     if not out["stills"] or not any(out["stills"].values()):
-        print("❌ no stills: %s\n%s" % (out["proof"].get("why"), out.get("excerpt", "")[-2000:]))
+        print("❌ no stills: %s\n%s" % (out.get("gpu_faulted") or out["proof"].get("why"), out.get("excerpt", "")[-2000:]))
+        gpu_ok()
         continue
     for (gname, vp), png in out["stills"].items():
         if not png:
@@ -254,7 +270,8 @@ if fid:
     print("fidelity exposure fitted to the reference: %+.2f EV" % EV["fidelity"])
 cols = ["reference"] + list(grades)
 sheet = gobbler.contact_sheet(rows_sheet, cols, WORK / "out" / "gobbler" / ("round_%02d.png" % ROUND), cell_w=400, scores=scores_sheet)
-display(IPImage(filename=sheet))
+if rows_sheet:
+    display(IPImage(filename=sheet))
 print("%-28s %-8s %-10s %6s %6s %6s %6s" % ("grade", "bake", "viewpoint", "SSIM", "litF", "Δ", "EVfit"))
 for (r, b, g, vp), s in sorted(SCORES.items()):
     if r == ROUND:
@@ -296,7 +313,9 @@ rung = {"resolution": [HW_, HH_], "spatial_samples": int(HERO_SAMPLES), "tempora
         "warmup_frames": 64, "texture_streaming": "fully_load", "cvars": dict(PLAN["ladder"]["high"]["cvars"], **{"r.ScreenPercentage": 100})}
 cams = [vp for vp in _names(HERO_VIEWPOINTS) if vp in BAKE["viewpoints"]]
 print("hero: bake %s · grade %s · %dx%d · %d samples · %s" % (hero[0], hero[1], HW_, HH_, HERO_SAMPLES, ", ".join(cams)))
-HERO = pipeline.render_grades(LAB, "gob_" + hero[0], cams, "hero", rung, {hero[1]: g}, label="hero")
+HERO = pipeline.render_grades(LAB, "gob_" + hero[0], cams, "hero", rung, {hero[1]: g}, label="hero") if gpu_ok() else {"stills": {}}
+if not any(HERO["stills"].values()):
+    print("❌ no hero stills: %s" % (HERO.get("gpu_faulted") or (HERO.get("proof") or {}).get("why")))
 if GOB_DRIVE.exists():
     import shutil
     dst = GOB_DRIVE / "hero" / time.strftime("%Y%m%d-%H%M%S")
@@ -357,7 +376,7 @@ EVERY = {"views": EVIEWS, "engines": {}}
 UNREAL_RES = "7680x4320"  #@param ["1920x1080", "3840x2160", "7680x4320"]
 UNREAL_SAMPLES = 256  #@param {type:"integer"}
 STAGE = "everywhere-unreal"
-if LAB and UP["ok"]:
+if LAB and UP["ok"] and gpu_ok():
     man = gobbler.manifest_for(BAKE, X3D_MANIFEST)
     imp = pipeline.import_scene(LAB, "gob_xite", XGLB["path"], "gltf", man, shape_centres=man["shape_centres"])
     print("import %s · %.0f s" % ("ok" if imp["report"].get("ok") else "FAILED", imp["seconds"]))
@@ -367,6 +386,8 @@ if LAB and UP["ok"]:
     c = pipeline.render_grades(LAB, "gob_xite", EVIEWS[:2], "calib", calib_rung, {"extreme": gobbler.with_exposure(gobbler.GRADES["extreme"], 0.0)},
                                label="calib")
     fits = [gobbler.exposure_fit(gobbler.resize_like(png, REFS[vp].shape), REFS[vp]) for (g, vp), png in c["stills"].items() if png]
+    if not fits:
+        print("❌ the exposure still did not render: %s" % (c.get("gpu_faulted") or (c.get("proof") or {}).get("why")))
     UE_EV = round(sum(fits) / len(fits), 2) if fits else 0.0
     print("Unreal exposure fitted to the reference: %+.2f EV" % UE_EV)
     UW, UH = _res(UNREAL_RES)
@@ -381,7 +402,7 @@ if LAB and UP["ok"]:
     print("Unreal extreme: %d stills in %.0f s · GPU peak %s%%, mean %s%% · VRAM peak %.1f GB" % (
         sum(1 for p in UE_X["stills"].values() if p), UE_X["seconds"], g.get("peak_util", "?"), g.get("mean_util", "?"), (g.get("peak_mem_mb") or 0) / 1024))
 else:
-    print("Unreal is not up (step 3): skipped")
+    print("Unreal skipped: %s" % ("not up (step 3)" if not (LAB and UP.get("ok")) else "the GPU is faulted (see above)"))
 
 # %%
 #@title 9c · Blender Cycles { display-mode: "form" }

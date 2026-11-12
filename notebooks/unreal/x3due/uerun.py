@@ -45,6 +45,9 @@ CRASH = [  # (signature, regex, advice)
      "Vulkan cannot see the NVIDIA GPU as this user: rerun step 2 (vulkan.enable) and check vulkaninfo as user ue"),
     ("device_lost", re.compile(r"VK_ERROR_DEVICE_LOST|TerminateOnGPUCrash|GPU crash", re.I),
      "GPU hang/crash (seen on UE 5.8.0 Linux); retry with r.Vulkan.AllowAsyncCompute=0, then without ray tracing, then -sm5"),
+    ("gpu_faulted", re.compile(r"Cannot create a Vulkan device|Vulkan device creation failed", re.I),
+     "the GPU refuses a new Vulkan device: after a device-lost crash Colab's GPU stays faulted until the runtime restarts "
+     "(Runtime > Disconnect and delete runtime); nothing on this runtime can draw on it any more"),
     ("bindless_rt", re.compile(r"ray tracing pipelines are only supported in bindless|SupportsBindless\(\)", re.I),
      "set BindlessSupport=AllShaderTypes for VULKAN_SM6 (DataDrivenPlatformInfo.ini) and retry"),
     ("nanite_pool", re.compile(r"Streaming pool size \(\d+MB\) must be smaller than the largest allocation", re.I),

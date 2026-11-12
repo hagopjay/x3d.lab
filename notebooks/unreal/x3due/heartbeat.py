@@ -86,10 +86,11 @@ class Heartbeat:
         tmp = self.dir / "heartbeat.json.tmp"
         tmp.write_text(json.dumps(st, indent=1, default=str))
         os.replace(tmp, self.dir / "heartbeat.json")
+        job = "%s %ss" % (st["job"], st["job_elapsed_s"]) if st["job"] else "idle"
         with open(self.dir / "heartbeat.log", "a") as f:
-            f.write("%s up %ss · %s %ss · %s · shaders %s · RAM %s · VRAM %s · GPU %s%% · load %s · disk %s GB\n" % (
-                st["utc"], st["vm_uptime_s"], st["job"], st["job_elapsed_s"], st.get("stage"), st["shader_jobs_done"], st["ram_gb"],
-                st["vram_gb"], st["gpu_util"], (st["load_avg"] or ["?"])[0], st["disk_free_gb"]))
+            f.write("%s up %ss · %s · %s · shaders %s · RAM %s · VRAM %s · GPU %s%% · load %s · disk %s GB\n" % (
+                st["utc"], st["vm_uptime_s"], job, st.get("stage"), st["shader_jobs_done"] if st["shader_jobs_done"] is not None else "-",
+                st["ram_gb"], st["vram_gb"], st["gpu_util"], (st["load_avg"] or ["?"])[0], st["disk_free_gb"]))
         (self.drive / "heartbeat" / "latest.json").write_text(json.dumps({"run_id": self.run_id, "utc": st["utc"], "folder": str(self.dir)}))
 
     def mirror(self) -> int:
