@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="X3D Lab dev console: X_ITE, SAI, a live scene graph, a JavaScript REPL and fidelity checks across X3D, Blender, glTF and Unreal.">
+<title>X3D Lab · dev console</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app" id="app">
+  <header class="bar">
+    <div class="brand"><span class="diamond">◆</span> X3D Lab <span class="sub">dev console · X_ITE <span id="xite-version">…</span></span></div>
+    <label class="field">scene
+      <select id="scene"></select>
+    </label>
+    <label class="field">encoding
+      <select id="encoding">
+        <option value="xml">XML .x3d</option>
+        <option value="vrml">ClassicVRML .x3dv</option>
+        <option value="json">JSON .x3dj</option>
+      </select>
+    </label>
+    <label class="field">view
+      <select id="view">
+        <option value="single">X_ITE</option>
+        <option value="split">X_ITE ⟷ Blender glb</option>
+      </select>
+    </label>
+    <label class="field">viewpoint
+      <select id="viewpoint"></select>
+    </label>
+    <div class="bar-right">
+      <button class="btn" id="reload" title="Reload the scene (R)">Reload</button>
+      <button class="btn" id="open-file" title="Load your own .x3d / .x3dv / .x3dj / .glb (or drop it on the canvas)">Open file…</button>
+      <input type="file" id="file" accept=".x3d,.x3dv,.x3dj,.wrl,.glb,.gltf" hidden>
+      <button class="btn btn-primary" id="shot" title="Save a PNG of the canvas">PNG</button>
+    </div>
+  </header>
+
+  <main class="stage" id="stage">
+    <section class="viewport" id="vp-left">
+      <div class="tag">source · <span id="left-label">X3D</span></div>
+      <x3d-canvas id="left" role="img" aria-label="X3D scene (source, X_ITE)" splashScreen="false" preserveDrawingBuffer="true" notifications="false" contextMenu="true"></x3d-canvas>
+    </section>
+    <section class="viewport" id="vp-right" hidden>
+      <div class="tag">Blender glb · <span id="right-label">—</span></div>
+      <x3d-canvas id="right" role="img" aria-label="Blender glb of the scene (X_ITE)" splashScreen="false" preserveDrawingBuffer="true" notifications="false" contextMenu="true"></x3d-canvas>
+    </section>
+    <div class="hud" id="hud">
+      <span><b id="fps">–</b> fps</span>
+      <span><b id="node-count">–</b> nodes</span>
+      <span><b id="route-count">–</b> routes</span>
+      <span id="diff-chip" hidden>Δ <b id="diff-value">–</b></span>
+      <span class="dim" id="renderer">–</span>
+    </div>
+    <div class="drop" id="drop" hidden>Drop an X3D or glTF file</div>
+  </main>
+
+  <aside class="side">
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="graph" aria-selected="true">Scene graph</button>
+      <button role="tab" data-tab="inspect">Inspector</button>
+      <button role="tab" data-tab="fidelity">Fidelity</button>
+      <button role="tab" data-tab="validate">Validation</button>
+      <button role="tab" data-tab="routes">Routes</button>
+    </nav>
+    <div class="pane" data-tab="graph" data-active="true">
+      <div class="pane-head"><input id="graph-filter" placeholder="filter by type or DEF…" spellcheck="false"></div>
+      <div class="tree" id="tree"></div>
+    </div>
+    <div class="pane" data-tab="inspect">
+      <div id="inspector" class="inspector"><p class="dim">Pick a node in the scene graph.</p></div>
+    </div>
+    <div class="pane" data-tab="fidelity">
+      <div id="fidelity" class="fidelity"></div>
+    </div>
+    <div class="pane" data-tab="validate">
+      <div id="validation"></div>
+    </div>
+    <div class="pane" data-tab="routes">
+      <div id="routes"></div>
+    </div>
+  </aside>
+
+  <section class="console">
+    <div class="console-head">
+      <span class="title">console</span>
+      <div class="snips" id="snips"></div>
+      <button class="btn btn-ghost btn-sm" id="clear">clear</button>
+    </div>
+    <div class="log" id="log" aria-live="polite"></div>
+    <form class="prompt" id="prompt" autocomplete="off">
+      <span class="caret">›</span>
+      <textarea id="input" rows="1" spellcheck="false" placeholder="JavaScript with browser, scene, X3D and helpers in scope. Try help()"></textarea>
+    </form>
+  </section>
+</div>
+<!-- X_ITE loads after the markup: a custom element upgraded during parsing is constructed before its
+     attributes exist, and X_ITE reads preserveDrawingBuffer when it creates the WebGL context. -->
+<script src="vendor/x_ite/x_ite.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

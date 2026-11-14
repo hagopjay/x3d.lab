@@ -1,0 +1,102 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <!-- defect: no viewport meta → mobile layout is a desktop layout, scaled -->
+  <title>SKYLINE — Dispatch</title>
+
+  <!-- defect: render-blocking third-party tag, same-origin blocking, no defer -->
+  <script src="__ALT_ORIGIN__/thirdparty/analytics.js?tag=fleet-4.9.1"></script>
+  <!-- defect: 26KB of ES5 polyfills no evergreen browser needs, parser-blocking -->
+  <script src="/site/broken/vendor/legacy-polyfill.js"></script>
+
+  <link rel="stylesheet" href="/site/broken/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M2 15.5 22 8l-9.6 12-2.2-4.6L2 15.5Z" fill="#ffb020"/>
+      </svg>
+      SKYLINE
+    </div>
+    <nav class="nav">
+      <a href="#" aria-current="page">Dispatch</a>
+      <a href="#">Fleet</a>
+      <a href="#">Crew</a>
+      <a href="#">Fares</a>
+    </nav>
+    <div class="topbar-right">
+      <span class="clock" id="clock">--:--:--Z</span>
+      <!-- defect: two icon buttons with no accessible name, 18×18 hit target -->
+      <button class="icon-btn"></button>
+      <button class="icon-btn"></button>
+      <div class="avatar" role="img"></div>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <!-- defect: 1.4MB PNG, no dimensions, no preload, no fetchpriority, no alt -->
+      <img class="hero-img" src="/shared/img/hero-legacy.png">
+      <div class="hero-copy">
+        <span class="eyebrow"><span class="dot"></span>Dispatch · Sector 4 · Live</span>
+        <h1>Fly the<br><em>quiet sky.</em></h1>
+        <p class="hero-sub">SKYLINE operates 214 overnight sectors across the Atlantic corridor.
+          Fares cleared here are honoured system-wide, with no rebooking penalty for weather holds.</p>
+        <div class="btn-row">
+          <button class="btn btn-primary" id="cta-search">Find fares</button>
+          <button class="btn btn-ghost" id="cta-fleet">View fleet status</button>
+        </div>
+      </div>
+    </section>
+
+    <div class="wrap">
+      <form class="search-panel" onsubmit="return false">
+        <!-- defect: inputs with no label, placeholder-only -->
+        <div class="field unlabeled"><input id="from" placeholder="Atlanta (ATL)" value="ATL"></div>
+        <div class="field unlabeled"><input id="to" placeholder="London (LHR)" value="LHR"></div>
+        <div class="field unlabeled"><input id="date" type="date" value="2026-11-14"></div>
+        <div class="field unlabeled">
+          <select id="pax"><option>1 adult</option><option>2 adults</option><option>3 adults</option></select>
+        </div>
+        <button class="btn btn-primary" id="search-btn" type="submit">Search</button>
+      </form>
+
+      <div class="section-head">
+        <h2>Live fares</h2>
+        <span class="hint" id="result-count">3 fares · ATL → LHR</span>
+      </div>
+
+      <div class="cols">
+        <div class="cards"></div>
+        <aside class="feed">
+          <h3>Ops feed</h3>
+          <ul id="ops-feed">
+            <li><span class="t">04:11:02</span><span>Sector SK118 cleared for oceanic entry</span></li>
+            <li><span class="t">04:09:47</span><span>Crew rest minimum met, LHR rotation</span></li>
+            <li><span class="t">04:08:15</span><span>Fuel burn 2.1% under plan</span></li>
+          </ul>
+          <img data-needs-map alt="fleet map" style="width:100%;margin-top:12px">
+        </aside>
+      </div>
+
+      <section class="tracker">
+        <h3>Track a flight</h3>
+        <p>Pull the live position and delay forecast for any cleared sector.</p>
+        <button class="btn btn-ghost" id="track-btn">Track flight SK118</button>
+        <div id="track-result"></div>
+      </section>
+
+      <table style="display:none" aria-hidden="true">
+        <tbody id="fare-matrix"></tbody>
+      </table>
+
+      <footer>SKYLINE Air Systems · dispatch console build 2026.11.04-cursed · internal use only</footer>
+    </div>
+  </main>
+
+  <div id="toasts"></div>
+  <script src="/site/broken/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,178 @@
+/* SKYLINE dispatch — station stylesheet (build: 2026.11.04-cursed) */
+@font-face { /* no font-display: the FOUT/FOIT classic */
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  src: url('/shared/fonts/Inter-400.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  src: url('/shared/fonts/Inter-600.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Space Grotesk';
+  font-style: normal;
+  font-weight: 700;
+  src: url('/shared/fonts/SpaceGrotesk-700.woff2') format('woff2');
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: #070b14;
+  color: #e8eefc;
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: #ffb020; }
+
+/* ---------- top bar ---------- */
+.topbar {
+  position: sticky; top: 0; z-index: 40;
+  display: flex; align-items: center; gap: 20px;
+  height: 64px; padding: 0 24px;
+  background: rgba(7, 11, 20, 0.82);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid #1b2438;
+}
+.brand { display: flex; align-items: center; gap: 10px; font-family: 'Space Grotesk', sans-serif; font-weight: 700; letter-spacing: 0.14em; font-size: 14px; }
+.brand-mark { width: 26px; height: 26px; }
+.nav { display: flex; gap: 4px; margin-left: 12px; }
+.nav a {
+  color: #93a1bb; text-decoration: none; font-size: 13px; padding: 7px 12px; border-radius: 8px;
+}
+.nav a[aria-current='page'] { background: #141d31; color: #e8eefc; }
+.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+.clock { font-variant-numeric: tabular-nums; font-size: 12px; letter-spacing: 0.12em; color: #7d8aa5; }
+.avatar { width: 30px; height: 30px; border-radius: 50%; background: linear-gradient(135deg, #ffb020, #ff6b3d); }
+.icon-btn {
+  /* 18px target, no accessible name: two a11y failures in one element */
+  width: 18px; height: 18px; padding: 0; border: 0; background: #1b2438; border-radius: 4px; cursor: pointer;
+}
+.icon-btn::before { content: '⌕'; color: #93a1bb; font-size: 11px; }
+
+/* ---------- hero ---------- */
+.hero { position: relative; overflow: hidden; background: #0b1220; }
+.hero-img { width: 100%; display: block; }
+.hero-copy {
+  position: absolute; left: 48px; bottom: 44px; right: 48px; max-width: 640px;
+}
+.eyebrow {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase;
+  color: #ffcf7a; background: rgba(255, 176, 32, 0.12);
+  border: 1px solid rgba(255, 176, 32, 0.28); padding: 5px 10px; border-radius: 999px;
+  margin-bottom: 16px;
+}
+.dot { width: 6px; height: 6px; border-radius: 50%; background: #ffb020; box-shadow: 0 0 10px #ffb020; }
+h1 {
+  font-family: 'Space Grotesk', sans-serif; font-weight: 700;
+  font-size: clamp(34px, 4.4vw, 60px); line-height: 1.02; letter-spacing: -0.02em;
+  margin: 0 0 14px; color: #fff; text-shadow: 0 2px 30px rgba(0,0,0,0.45);
+}
+h1 em { font-style: normal; color: #ffb020; }
+.hero-sub { margin: 0 0 22px; color: #cfd8ea; max-width: 46ch; font-size: 15px; text-shadow: 0 1px 12px rgba(0,0,0,0.6); }
+.btn-row { display: flex; gap: 10px; align-items: center; }
+.btn {
+  font: inherit; font-weight: 600; font-size: 14px; cursor: pointer;
+  border-radius: 10px; padding: 11px 18px; border: 1px solid transparent;
+  transition: transform 0.12s ease, background 0.16s ease;
+}
+.btn:active { transform: translateY(1px); }
+.btn-primary { background: #ffb020; color: #1a1206; }
+.btn-primary:hover { background: #ffc252; }
+.btn-ghost { background: rgba(255,255,255,0.06); color: #e8eefc; border-color: rgba(255,255,255,0.16); }
+
+/* ---------- promo banner (injected late: layout shift) ---------- */
+.promo {
+  display: flex; align-items: center; gap: 14px;
+  padding: 18px 24px; background: linear-gradient(90deg, #1a1206, #2a1c07 60%, #1a1206);
+  border-bottom: 1px solid #3a2a0a; color: #ffd89b; font-size: 13px;
+}
+.promo strong { color: #fff; }
+
+/* ---------- layout ---------- */
+.wrap { max-width: 1180px; margin: 0 auto; padding: 28px 24px 80px; }
+.section-head { display: flex; align-items: baseline; gap: 12px; margin: 34px 0 14px; }
+.section-head h2 { font-family: 'Space Grotesk', sans-serif; font-size: 18px; margin: 0; letter-spacing: 0.01em; }
+.section-head .hint { font-size: 12px; color: #6d7994; }
+
+/* ---------- search panel ---------- */
+.search-panel {
+  margin-top: -38px; position: relative; z-index: 20;
+  background: #0e1626; border: 1px solid #1d2942; border-radius: 16px;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.55);
+  padding: 18px; display: grid; gap: 12px;
+  grid-template-columns: 1.2fr 1.2fr 1fr 0.7fr auto;
+  align-items: end;
+}
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field label { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: #7d8aa5; }
+.field input, .field select {
+  font: inherit; font-size: 14px; color: #e8eefc;
+  background: #0a111e; border: 1px solid #22304d; border-radius: 9px; padding: 10px 12px;
+  width: 100%;
+}
+.field input:focus, .field select:focus { outline: 2px solid #ffb020; outline-offset: 1px; }
+.unlabeled input { border-color: #22304d; }
+
+/* ---------- fare cards ---------- */
+.cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.card {
+  background: #0e1626; border: 1px solid #1d2942; border-radius: 16px; overflow: hidden;
+  display: flex; flex-direction: column;
+}
+.card img { width: 100%; display: block; }
+.card-body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+.route { display: flex; align-items: center; gap: 8px; font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 15px; }
+.route .arrow { color: #47536b; }
+.price { margin-top: auto; display: flex; align-items: baseline; gap: 8px; }
+.price .amount { font-family: 'Space Grotesk', sans-serif; font-size: 24px; font-weight: 700; color: #fff; }
+.price .meta { font-size: 12px; color: #5b6472; } /* 3.1:1 on #0e1626 — contrast fail */
+.card .btn { width: 100%; text-align: center; }
+.badge {
+  align-self: flex-start; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+  padding: 3px 8px; border-radius: 6px; background: #14243d; color: #8fb7ff;
+}
+
+/* ---------- ops feed ---------- */
+.cols { display: grid; grid-template-columns: 1.6fr 1fr; gap: 20px; align-items: start; }
+.feed { background: #0b1220; border: 1px solid #1b2438; border-radius: 16px; padding: 14px 16px; }
+.feed h3 { margin: 0 0 10px; font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: #7d8aa5; }
+.feed ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 9px; font-size: 12.5px; color: #aab6cc; }
+.feed li { display: flex; gap: 8px; }
+.feed .t { color: #52607a; font-variant-numeric: tabular-nums; }
+
+/* ---------- tracker ---------- */
+.tracker { margin-top: 26px; background: #0e1626; border: 1px solid #1d2942; border-radius: 16px; padding: 18px; }
+.tracker h3 { margin: 0 0 4px; font-family: 'Space Grotesk', sans-serif; font-size: 16px; }
+.tracker p { margin: 0 0 14px; color: #7d8aa5; font-size: 13px; }
+#track-result { margin-top: 14px; font-size: 13px; color: #8fb7ff; min-height: 20px; }
+
+/* ---------- footer ---------- */
+footer { border-top: 1px solid #141d31; padding: 24px; color: #5b6472; font-size: 12px; text-align: center; }
+
+/* ---------- toasts ---------- */
+#toasts { position: fixed; right: 20px; bottom: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 90; }
+.toast {
+  background: #141d31; border: 1px solid #22304d; border-left: 3px solid #ffb020;
+  color: #dbe4f5; font-size: 13px; padding: 10px 14px; border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(0,0,0,0.5); animation: slide 0.2s ease;
+}
+@keyframes slide { from { transform: translateX(12px); opacity: 0; } }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+@media (max-width: 900px) {
+  .search-panel { grid-template-columns: 1fr 1fr; margin-top: 0; }
+  .cards { grid-template-columns: 1fr; }
+  .cols { grid-template-columns: 1fr; }
+  .hero-copy { left: 20px; right: 20px; bottom: 22px; }
+}
+
+/* late-injected advisory strip (broken build only) */
+.advisory { display: block; padding: 0; border: 0; background: none; }
+.advisory .promo { border-radius: 0; }

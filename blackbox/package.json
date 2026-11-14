@@ -1,0 +1,24 @@
+{
+  "name": "blackbox",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "description": "BLACKBOX \u2014 MCP-first browser forensics with an optional WebGPU compute lab",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "mission": "node agent/run-cli.mjs",
+    "gpu-preflight": "node agent/gpu-preflight.mjs",
+    "gpu-smoke": "node agent/webgpu-smoke.mjs",
+    "x3d:build": "cd x3d && python3 -m x3dlab build --out ../site/x3d/scenes",
+    "x3d:mission": "node agent/x3d-cli.mjs",
+    "x3d:test": "cd x3d && python3 -m unittest discover -s tests -v",
+    "x3d:mcp": "cd x3d && python3 -m x3dlab mcp"
+  },
+  "dependencies": {
+    "chrome-devtools-mcp": "1.13.0",
+    "x_ite": "^16.7.1"
+  }
+}
