@@ -306,6 +306,55 @@ def check_engine(engine_dir) -> dict:
     return {"ok": not missing, "missing": missing, **build_version(e)}
 
 
+# Desktop libraries Unreal 5.8's editor links that Colab's Ubuntu 24.04 image lacks. Seen 14 Nov 2026 on a Colab G4: step 6
+# exited rc 127 in 1 s with "libatk-1.0.so.0: cannot open shared object file" (5.4 did not link ATK/GTK). Ubuntu 24.04
+# renamed some packages with a t64 suffix, so each install tries the name and then name + "t64".
+SYSTEM_LIB_PACKAGES = {
+    "libatk-1.0.so.0": "libatk1.0-0", "libatk-bridge-2.0.so.0": "libatk-bridge2.0-0", "libatspi.so.0": "libatspi2.0-0",
+    "libgtk-3.so.0": "libgtk-3-0", "libgdk-3.so.0": "libgtk-3-0", "libnss3.so": "libnss3", "libnssutil3.so": "libnss3",
+    "libsmime3.so": "libnss3", "libnspr4.so": "libnspr4", "libxkbcommon.so.0": "libxkbcommon0", "libgbm.so.1": "libgbm1",
+    "libXss.so.1": "libxss1", "libasound.so.2": "libasound2", "libcups.so.2": "libcups2", "libdrm.so.2": "libdrm2",
+    "libXcomposite.so.1": "libxcomposite1", "libXdamage.so.1": "libxdamage1", "libXrandr.so.2": "libxrandr2",
+    "libpango-1.0.so.0": "libpango-1.0-0", "libcairo.so.2": "libcairo2", "libsecret-1.so.0": "libsecret-1-0",
+    "libXcursor.so.1": "libxcursor1", "libXi.so.6": "libxi6", "libXinerama.so.1": "libxinerama1", "libSM.so.6": "libsm6",
+}
+
+
+def missing_system_libs(engine_dir, run=subprocess.run) -> dict:
+    """ldd over the editor and the shared objects beside it. A library ldd can't find is "system" when no file of that
+    name ships anywhere in the engine (Unreal loads its own boost, uLang, etc. from its own folders at run time, so ldd
+    reports those as not found although they are fine: the 14 Nov G4 run listed a dozen such false alarms)."""
+    b = Path(engine_dir) / "Engine" / "Binaries" / "Linux"
+    files = [b / "UnrealEditor", b / "UnrealEditor-Cmd"] + sorted(b.glob("*.so"))
+    nf = set()
+    for f in files:
+        if f.exists():
+            out = run(["ldd", str(f)], capture_output=True, text=True).stdout or ""
+            nf |= set(re.findall(r"^\s*(\S+) => not found", out, re.M))
+    shipped = {n for n in nf if any(Path(engine_dir).glob("Engine/**/%s" % n))}
+    system = sorted(nf - shipped)
+    return {"system": system, "bundled": sorted(shipped),
+            "packages": sorted({SYSTEM_LIB_PACKAGES[n] for n in system if n in SYSTEM_LIB_PACKAGES}),
+            "unknown": [n for n in system if n not in SYSTEM_LIB_PACKAGES]}
+
+
+def install_system_libs(engine_dir, log=print, run=subprocess.run) -> dict:
+    """Install what missing_system_libs finds, desktop libraries only and with --no-install-recommends, so the NVIDIA
+    driver and Vulkan set up in step 4 are left alone. Returns before/after."""
+    before = missing_system_libs(engine_dir, run=run)
+    done = []
+    if before["packages"]:
+        run(["apt-get", "update", "-qq"], capture_output=True, text=True)
+        for pk in before["packages"]:
+            ok = any(run(["apt-get", "install", "-y", "-qq", "--no-install-recommends", p], capture_output=True,
+                         text=True).returncode == 0 for p in (pk, pk + "t64"))
+            done.append((pk, ok))
+            log(("✓ " if ok else "✗ ") + pk)
+        run(["ldconfig"], capture_output=True, text=True)
+    after = missing_system_libs(engine_dir, run=run) if done else before
+    return {"before": before["system"], "installed": done, "after": after["system"], "unknown": after["unknown"]}
+
+
 def find_plugin(engine_dir, name) -> str | None:
     hits = list(Path(engine_dir, "Engine", "Plugins").glob("**/%s.uplugin" % name))
     return str(hits[0]) if hits else None

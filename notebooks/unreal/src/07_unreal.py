@@ -82,6 +82,7 @@ SCENES = "calib, stilllife, toycar-x3d, toycar-gltf, odyssey, gobbler3"  #@param
 #@markdown also available: `gobbler-gyro`, `hall` (14 MB, 23 viewpoints), `pbr-tests`, `lantern-gltf`, `waterbottle-gltf`
 RUNG = "auto"  #@param ["auto", "preview", "high", "ultra", "ultra_lumen"]
 LOOK = "cinematic"  #@param ["cinematic", "match"]
+EXPOSURE = "auto"  #@param ["auto", "fixed"]
 MAX_VIEWPOINTS = 4  #@param {type:"slider", min:1, max:30, step:1}
 COMPARE = True  #@param {type:"boolean"}
 USD = "auto"  #@param ["auto", "off"]
@@ -97,6 +98,7 @@ GENTLE = True  #@param {type:"boolean"}
 #@markdown **VERBOSE** streams Unreal's important log lines while it runs, plus a heartbeat every `HEARTBEAT_S` seconds (shader jobs and their rate, workers, Unreal's memory, RAM, VRAM, GPU %, free disk), and warns when Unreal's memory grows with nothing to show for it. **VISUAL** shows every still the moment it is written and a VRAM/GPU chart after each Unreal job.
 LAB_REPO = "hagopjay/x3d.lab"
 LAB_REF = "main"
+#@markdown **EXPOSURE** `auto` (cinematic look): step 9 first brackets each scene at the preview rung (about 2 minutes, one Unreal start per round) and renders at the exposure whose still is neither clipped nor crushed; `fixed` = the calibrated EV for every scene (the 14 Nov G4 run needed -14 EV for odyssey and +2 for the glTF controls). The match look always stays at the calibrated exposure.
 #@markdown **auto** rung: *high* on a T4 or L4, *ultra* on A100 / G4. **match** look = X3D-like light (no tone curve, no global illumination): use it to compare engines; **cinematic** = Lumen GI, filmic tone curve.
 print("✅ options saved: engine from %s · scenes %s · rung %s · look %s" % (ENGINE_SOURCE, SCENES, RUNG, LOOK))
 
@@ -156,7 +158,7 @@ from x3due import (compare, convert, engine, engines, gltfstat, lines, live, pip
                    uerun, vulkan, x3dscene)
 SC = report.Scorecard()
 CARD = {"notebook": "07_Unreal_Fidelity", "lab_commit": sh("git -C %s rev-parse --short HEAD" % LAB_DIR), "options": {
-    k: globals()[k] for k in ("ENGINE_SOURCE", "ENGINE_VERSION", "SUBSTRATE", "MEGALIGHTS", "GHCR_TAG", "SCENES", "RUNG", "LOOK",
+    k: globals()[k] for k in ("ENGINE_SOURCE", "ENGINE_VERSION", "SUBSTRATE", "MEGALIGHTS", "GHCR_TAG", "SCENES", "RUNG", "LOOK", "EXPOSURE",
                               "MAX_VIEWPOINTS", "COMPARE", "USD", "FORCE_HWRT", "PRIMITIVE_DIVISIONS", "BLENDER_IO_REF",
                               "LINES_FOR_UNREAL", "LINE_PX", "X3D_COLOURS", "BACKGROUND_GRADIENT")}}
 WORK = Path("/content/x3due") if Path("/content").is_dir() else Path.home() / "x3due"
@@ -377,6 +379,12 @@ except Exception as exc:
     print("❌", exc)
     SC.add("5 engine", "engine on local disk", "FAIL", str(exc)[:350])
 CARD["engine"] = {k: v for k, v in ENGINE.items() if k not in ("extract",)}
+if ENGINE.get("version") and Path(LAB.engine_dir).exists():
+    _libs = engine.install_system_libs(LAB.engine_dir)          # 5.8 links ATK/GTK; Colab's image lacks them (rc 127 at start)
+    CARD["engine"]["system_libs"] = _libs
+    SC.add("5 engine", "system libraries the editor links", "PASS" if not _libs["after"] else "WARN",
+           ("none missing" if not _libs["before"] else "installed %s" % ", ".join(p for p, ok in _libs["installed"] if ok))
+           + ("; still missing %s" % _libs["after"] if _libs["after"] else ""))
 if ENGINE.get("version") and not LAB.settings["sm6"]:
     LAB.settings["ray_tracing"] = False
     engine.disable_vulkan_rt(LAB.engine_dir)
@@ -474,6 +482,11 @@ STAMP = time.strftime("%Y-%m-%dT%H-%MZ", time.gmtime())
 SAVED = json.loads(json.dumps(LAB.settings, default=str))
 REPORT = {"stamp": STAMP, "gpu": GPU, "settings_before": SAVED, "variants": []}
 CRASH_RX = re.compile(r"Caught signal|Segmentation fault|Unhandled Exception|Assertion failed|appError called|Fatal error", re.I)
+# UnrealBuildTool's AutoSDK probe (dotnet) segfaults on Colab with rc 139 and the editor carries on; 6c read it as the
+# editor crashing and reported "no Vulkan start works" (14 Nov 2026, G4). Lines from UBT are not the editor.
+BENIGN_RX = re.compile(r"UnrealBuildTool|AutoSDK|BatchFiles/Linux/Build\.sh", re.I)
+def crashed(l):
+    return bool(CRASH_RX.search(l)) and not BENIGN_RX.search(l)
 BIN = Path(LAB.engine_dir) / "Engine/Binaries/Linux"
 CONF = Path(LAB.engine_dir) / "Engine/Config"
 
@@ -561,16 +574,16 @@ head("③ Step 6's log: Vulkan start-up and the last lines before the crash")
 LOG6 = sorted(LOGS.glob("smoke_*.log"), key=os.path.getmtime)
 LOG6 = LOG6[-1] if LOG6 else None
 if LOG6:
-    lines = LOG6.read_text(errors="replace").splitlines()
-    vk = [l for l in lines if re.search(r"LogVulkanRHI|LogRHI|LogInit: .*RHI|Profile|SM6|SM5", l) and not re.search(r"Display:\s+[-+] VK_", l)]
-    crash_at = next((i for i, l in enumerate(lines) if CRASH_RX.search(l)), len(lines))
-    print("log: %s (%d lines)" % (LOG6, len(lines)))
+    log6 = LOG6.read_text(errors="replace").splitlines()     # not `lines`: that name is the x3due.lines module step 8 uses
+    vk = [l for l in log6 if re.search(r"LogVulkanRHI|LogRHI|LogInit: .*RHI|Profile|SM6|SM5", l) and not re.search(r"Display:\s+[-+] VK_", l)]
+    crash_at = next((i for i, l in enumerate(log6) if crashed(l)), len(log6))
+    print("log: %s (%d lines)" % (LOG6, len(log6)))
     for l in vk[-45:]:
         print("  " + l[:240])
     print("  … the 25 lines before the crash:")
-    for l in lines[max(0, crash_at - 25): crash_at + 6]:
+    for l in log6[max(0, crash_at - 25): crash_at + 6]:
         print("  " + l[:240])
-    REPORT["step6_log"] = {"path": str(LOG6), "vulkan_lines": vk[-80:], "before_crash": lines[max(0, crash_at - 60): crash_at + 40]}
+    REPORT["step6_log"] = {"path": str(LOG6), "vulkan_lines": vk[-80:], "before_crash": log6[max(0, crash_at - 60): crash_at + 40]}
 else:
     print("no step 6 log under", LOGS)
 CR = sorted(glob.glob(str(Path(LAB.project_dir) / "Saved/Crashes/*")), key=os.path.getmtime)
@@ -672,7 +685,7 @@ for label, ch in VARIANTS:
     res = uerun.run(cmd, log, user=LAB.user, env_vars=LAB.env(), timeout=PROBE_SECONDS)
     text = log.read_text(errors="replace") if log.exists() else ""
     timed_out = str(res.get("killed") or "").startswith("timeout")
-    crash = next((l.strip() for l in text.splitlines() if CRASH_RX.search(l)), None) or (
+    crash = next((l.strip() for l in text.splitlines() if crashed(l)), None) or (
         "exit code %s" % res["rc"] if res["rc"] not in (0, None) and not timed_out else None)
     ok = not crash and (timed_out or res["rc"] == 0)
     platform = (re.findall(r"\b(VULKAN_SM6|VULKAN_SM5)\b", text) or ["?"])[-1]
@@ -913,12 +926,20 @@ if rung_name not in PLAN["ladder"]:
 RUNG_USED = PLAN["ladder"][rung_name]
 print("rung %s: %dx%d · %s · %s spatial x %s temporal samples · textures %s" % (rung_name, *RUNG_USED["resolution"], RUNG_USED["renderer"],
       RUNG_USED["spatial_samples"], RUNG_USED["temporal_samples"], RUNG_USED["texture_streaming"]))
-RND = {}
+RND, EXPO = {}, {}
 for n, res in IMP.items():
     if n == "calib" or n.endswith("_usd") or not res["report"].get("ok"):
         continue
     cams = staging.pick(sorted(res["report"]["sequences"]), SCN.get(n, {}).get("framing", {}), MAX_VIEWPOINTS)
-    out = pipeline.render(LAB, n, cams, rung_name, RUNG_USED, look=LOOK)
+    grade = None
+    if EXPOSURE == "auto" and LOOK == "cinematic":
+        fit = pipeline.fit_exposure(LAB, n, cams, "preview", PLAN["ladder"]["preview"], look=LOOK, ev0=LAB.mapping.ev100)
+        EXPO[n] = fit
+        grade = {"post": {"auto_exposure_bias": fit["ev"]}}
+        SC.add("9 render", "%s: exposure" % n, "PASS" if fit["scored"] and not fit["edge"] else "WARN",
+               "EV %+g from a %d-still bracket in %.0f s%s" % (fit["offset"], len(fit["scored"]), fit["seconds"],
+               " (the edge of the bracket: the scene may want more)" if fit["edge"] else "") if fit["scored"] else fit.get("why", "no bracket"))
+    out = pipeline.render(LAB, n, cams, rung_name, RUNG_USED, look=LOOK, grade=grade)
     RND[n] = out
     ok = [s for s in out["stills"] if s["png"] or s["exr"]]
     p = out["proof"]
@@ -933,6 +954,7 @@ for n, res in IMP.items():
     for s in ok[:2]:
         if s["png"] and not (LAB.live and s["png"] in LAB.live.shown):      # VISUAL already showed it live
             display(IPImage(filename=s["png"], width=640))
+CARD["exposure"] = EXPO
 CARD["renders"] = {n: {"rung": rung_name, "settings": RUNG_USED, "seconds": r["seconds"], "gpu": r.get("gpu"), "proof": r["proof"],
                        "stills": [{k: v for k, v in s.items() if k != "files"} for s in r["stills"]], "attempts": r["attempts"]}
                    for n, r in RND.items()}
@@ -1014,27 +1036,27 @@ print("run card:", CARD_PATH)
 def said(part, check):
     r = next((r for r in SC.rows if r["part"] == part and r["check"] == check), None)
     return (r["status"], r["reason"]) if r else ("SKIP", "not run")
-lines = []
+proved = []     # not `lines`: that name is the x3due.lines module step 8 uses
 s, why = said("6 start", "RHI is Vulkan on the NVIDIA GPU")
-lines.append("**Unreal on Colab's GPU, headless:** %s: %s." % (s, why))
+proved.append("**Unreal on Colab's GPU, headless:** %s: %s." % (s, why))
 s, why = said("4 Vulkan", "ray tracing decision")
-lines.append("**Ray tracing on this %s:** %s: %s." % (HW["kind"], s, why))
+proved.append("**Ray tracing on this %s:** %s: %s." % (HW["kind"], s, why))
 s, why = said("6 start", "one-time shader compile (cold start)")
-lines.append("**First-run cost:** %s." % why)
+proved.append("**First-run cost:** %s." % why)
 ok_imp = [n for n, r in IMP.items() if r["report"].get("ok")]
-lines.append("**Scenes imported:** %d of %d (%s)." % (len(ok_imp), len(IMP), ", ".join(ok_imp) or "none"))
+proved.append("**Scenes imported:** %d of %d (%s)." % (len(ok_imp), len(IMP), ", ".join(ok_imp) or "none"))
 ok_r = [n for n, r in RND.items() if any(s["png"] for s in r["stills"])]
-lines.append("**Scenes rendered at %s:** %s." % (RUNG if RUNG != "auto" else "the auto rung", ", ".join(ok_r) or "none"))
+proved.append("**Scenes rendered at %s:** %s." % (RUNG if RUNG != "auto" else "the auto rung", ", ".join(ok_r) or "none"))
 if CMP:
     ms = [v["xite"]["match"] for v in CMP.values() if v.get("xite", {}).get("match") is not None]
     if ms:
-        lines.append("**Silhouettes vs X_ITE:** median match %.3f over %d views (1.0 = same outline within 2 px)." % (sorted(ms)[len(ms) // 2], len(ms)))
+        proved.append("**Silhouettes vs X_ITE:** median match %.3f over %d views (1.0 = same outline within 2 px)." % (sorted(ms)[len(ms) // 2], len(ms)))
 if CALIB:
-    lines.append("**Light units:** X3D intensity 1 → %s (calibrated K = %s)." % (LAB.mapping.describe()["rule"], CALIB.get("k_measured")))
+    proved.append("**Light units:** X3D intensity 1 → %s (calibrated K = %s)." % (LAB.mapping.describe()["rule"], CALIB.get("k_measured")))
 c = SC.counts()
-lines.append("**Scorecard:** %d PASS · %d WARN · %d FAIL · %d SKIP. Every FAIL row says why; the run card has the logs' key lines." % (c["PASS"], c["WARN"], c["FAIL"], c["SKIP"]))
+proved.append("**Scorecard:** %d PASS · %d WARN · %d FAIL · %d SKIP. Every FAIL row says why; the run card has the logs' key lines." % (c["PASS"], c["WARN"], c["FAIL"], c["SKIP"]))
 display(HTML("<div style='font:14px system-ui;line-height:1.5'>" + "<br>".join(
-    __import__("re").sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", l) for l in lines) + "</div>"))
+    __import__("re").sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", l) for l in proved) + "</div>"))
 
 # %% [markdown]
 # ## Troubleshooting
@@ -1055,3 +1077,12 @@ display(HTML("<div style='font:14px system-ui;line-height:1.5'>" + "<br>".join(
 # | step 8: `api_misses` in the import report | a Python API name differs in this engine version | the import continues; tell the lab which names (they are in the run card) |
 # | step 9: no stills, log says *Movie Render* errors | MRQ did not start | the report says which job; `x3dlab_render.py` also has a `highresshot` mode (set `mode="highresshot"` in `pipeline.render`) |
 # | Colab disconnects | RAM exhausted | the watchdog stops Unreal at 94 % RAM; pick High-RAM, or fewer scenes |
+# | step 6: rc 127 in 1 s, *libatk-1.0.so.0: cannot open shared object file* | Unreal 5.8 links ATK/GTK, Colab's Ubuntu 24.04 image lacks them | step 5 now installs them (`engine.install_system_libs`); boost/uLang names ldd can't find ship with the engine and are fine |
+# | 6c: *no Vulkan start works* but step 6 passes | UnrealBuildTool's AutoSDK probe (dotnet) segfaults (rc 139), harmless | fixed: 6c ignores UBT lines |
+# | a second step 7 uses the pinned add-on, colours `as_is` | git as root refused the add-on folder `ue` owns (*dubious ownership*) | fixed: the checkout passes `safe.directory` for that folder |
+# | step 8: *'list' object has no attribute 'radius_for'* | an earlier cell assigned `lines`, hiding the `x3due.lines` module | fixed in 6c and 12; in your own cells use another name, or `from x3due import lines` |
+# | stills white or black (cinematic) | manual exposure fits the calibration box, not the scene | `EXPOSURE = "auto"` (default) brackets each scene first |
+# | spheres faceted in path-traced or hit-lit stills | ray tracing traced Nanite's reduced fallback mesh | fixed: every ray-traced rung sets `r.RayTracing.Nanite.Mode 1` |
+# | an animated scene shows another moment than you want | step 7 freezes a scene dark at time 0 at its brightest moment (odyssey: 0.886 of its 138 s film) | `showcase.CATALOGUE[name]["freeze_at"] = 0.5` (any fraction) before step 7 |
+#
+# **Known gaps in Unreal 5.8.4** (14 Nov 2026, Colab G4): Interchange drops `EXT_mesh_gpu_instancing` (*Extension is not supported*; use the plain DEF/USE glb, which keeps mesh sharing); the USD path imports lights and cameras but no meshes; the Khronos glTF controls have no lights of their own (made for an environment map, which this stage does not add); ToyCar is centimetre-sized and its framing misses it.
