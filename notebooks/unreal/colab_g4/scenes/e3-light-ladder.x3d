@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE X3D PUBLIC "ISO//Web3D//DTD X3D 4.0//EN" "https://www.web3d.org/specifications/x3d-4.0.dtd">
+<X3D profile="Interchange" version="4.0" xmlns:xsd="http://www.w3.org/2001/XMLSchema-instance" xsd:noNamespaceSchemaLocation="https://www.web3d.org/specifications/x3d-4.0.xsd">
+<head><component name="Lighting" level="2"/><meta name="title" content="E3 light ladder"/><meta name="description" content="One light type per bay on white PhysicalMaterial and classic Material panels: DirectionalLight, PointLight attenuation 1 0 0, PointLight 0 0 1 (inverse square), SpotLight. Measures how each X3D light unit lands in Unreal vs X_ITE."/><meta name="creator" content="HagopJay and Claude, x3d.lab G4 experiments, 15 Nov 2026"/></head>
+<Scene>
+<NavigationInfo headlight="false"/>
+<Background skyColor="0.02 0.02 0.02"/>
+<Viewpoint DEF="Front" description="Front" position="0 1.2 13" fieldOfView="0.7854"/>
+<Transform translation="-4.8 0 0"><!-- directional i=1 -->
+<DirectionalLight direction="0 -0.3 -1" intensity="1"/>
+<Transform translation="-0.65 1.2 0"><Shape><Appearance><PhysicalMaterial baseColor="0.8 0.8 0.8" metallic="0" roughness="1"/></Appearance><Box size="1.2 2.4 0.1"/></Shape></Transform>
+<Transform translation="0.65 1.2 0"><Shape><Appearance><Material diffuseColor="0.8 0.8 0.8" specularColor="0 0 0"/></Appearance><Box size="1.2 2.4 0.1"/></Shape></Transform>
+</Transform>
+<Transform translation="-1.6 0 0"><!-- point, attenuation 1 0 0 -->
+<PointLight location="0 1.2 1.6" intensity="1" attenuation="1 0 0" radius="4"/>
+<Transform translation="-0.65 1.2 0"><Shape><Appearance><PhysicalMaterial baseColor="0.8 0.8 0.8" metallic="0" roughness="1"/></Appearance><Box size="1.2 2.4 0.1"/></Shape></Transform>
+<Transform translation="0.65 1.2 0"><Shape><Appearance><Material diffuseColor="0.8 0.8 0.8" specularColor="0 0 0"/></Appearance><Box size="1.2 2.4 0.1"/></Shape></Transform>
+</Transform>
+<Transform translation="1.6 0 0"><!-- point, attenuation 0 0 1 -->
+<PointLight location="0 1.2 1.6" intensity="4" attenuation="0 0 1" radius="4"/>
+<Transform translation="-0.65 1.2 0"><Shape><Appearance><PhysicalMaterial baseColor="0.8 0.8 0.8" metallic="0" roughness="1"/></Appearance><Box size="1.2 2.4 0.1"/></Shape></Transform>
+<Transform translation="0.65 1.2 0"><Shape><Appearance><Material diffuseColor="0.8 0.8 0.8" specularColor="0 0 0"/></Appearance><Box size="1.2 2.4 0.1"/></Shape></Transform>
+</Transform>
+<Transform translation="4.8 0 0"><!-- spot -->
+<SpotLight location="0 1.2 2.2" direction="0 -0.25 -1" intensity="2" beamWidth="0.35" cutOffAngle="0.6" attenuation="0 0 1" radius="6"/>
+<Transform translation="-0.65 1.2 0"><Shape><Appearance><PhysicalMaterial baseColor="0.8 0.8 0.8" metallic="0" roughness="1"/></Appearance><Box size="1.2 2.4 0.1"/></Shape></Transform>
+<Transform translation="0.65 1.2 0"><Shape><Appearance><Material diffuseColor="0.8 0.8 0.8" specularColor="0 0 0"/></Appearance><Box size="1.2 2.4 0.1"/></Shape></Transform>
+</Transform>
+</Scene>
+</X3D>
