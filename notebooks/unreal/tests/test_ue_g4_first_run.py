@@ -145,3 +145,11 @@ def test_step9_fits_exposure_for_the_cinematic_look():
     assert 'EXPOSURE == "auto" and LOOK == "cinematic"' in cell and "pipeline.fit_exposure(" in cell
     assert "grade=grade" in cell
     assert 'EXPOSURE = "auto"' in SRC
+
+
+# ---------------------------------------------------------------------- grade names
+def test_render_grades_refuses_colliding_grade_names():
+    """'xg+3' and 'xg-3' both become 'xg_3' as Unreal job names: the second still overwrote the first (G4 sheet, 15 Nov)."""
+    import pytest
+    with pytest.raises(ValueError, match="same Unreal job name"):
+        pipeline.render_grades(None, "gob", ["EyeToEye"], "gbx", {}, {"xg+3": {}, "xg-3": {}})
