@@ -510,6 +510,12 @@ def render_grades(lab: Lab, name, camera_names, rung_name, rung, grades: dict, l
                   timeout=4 * 3600) -> dict:
     """Every grade x every viewpoint in ONE Unreal process (the map is reopened per still, so grades never mix):
     much faster than a start per grade. Returns {"stills": {(grade, viewpoint): png or None}, ...run_unreal's result}."""
+    seen = {}
+    for gname in grades:                                     # "+3" and "-3" both become "_3" in a job name: refuse, don't overwrite
+        u = project.ue_name(gname)
+        if u in seen:
+            raise ValueError("grade names %r and %r give the same Unreal job name %r; rename one (e.g. p3 / m3)" % (seen[u], gname, u))
+        seen[u] = gname
     d = lab.out / "stills" / name
     d.mkdir(parents=True, exist_ok=True)
     tag = "%s_%s" % (rung_name, project.ue_name(label))
