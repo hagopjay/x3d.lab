@@ -541,6 +541,72 @@ def render_grades(lab: Lab, name, camera_names, rung_name, rung, grades: dict, l
     return out
 
 
+# ---------------------------------------------------------------------- exposure fit
+# The cinematic look is manual exposure at the lab's EV100, which the calibration box fits. Scenes are not the box: on the
+# 14 Nov 2026 G4 run (UE 5.8.4) odyssey's White Room (four spots at X3D intensity 100) came out 86% clipped white at the
+# fixed exposure and wanted -14 EV, while the Khronos glTF controls (no lights of their own) wanted +2. A bracket at the
+# preview rung, scored on the picture, finds each scene's exposure before the expensive stills.
+EXPOSURE_FIRST = (4, 0, -4, -8, -12, -16)        # EV offsets of the first round, one Unreal start
+EXPOSURE_TARGET = 0.38                           # median luma (display-referred, 0..1) of a well-exposed still
+
+
+def luma_stats(png_path) -> dict:
+    """Median luma, the share of clipped white (> 0.98) and of crushed black (< 0.02) in a still."""
+    import numpy as np
+    from PIL import Image
+    a = np.asarray(Image.open(png_path).convert("RGB"), dtype=np.float32) / 255.0
+    y = 0.2126 * a[..., 0] + 0.7152 * a[..., 1] + 0.0722 * a[..., 2]
+    return {"median": round(float(np.median(y)), 4), "clip": round(float((y > 0.98).mean()), 4),
+            "black": round(float((y < 0.02).mean()), 4)}
+
+
+def exposure_badness(s: dict, target=EXPOSURE_TARGET) -> float:
+    """Distance from a mid-grey median, plus penalties for more than 2% clipped white or 25% crushed black."""
+    return abs(s["median"] - target) + 2.5 * max(0.0, s["clip"] - 0.02) + max(0.0, s["black"] - 0.25)
+
+
+def next_offsets(scored: dict) -> list:
+    """The next round from {offset: badness}: one and two stops either side of the best; when the best is the edge of
+    what was tried, four and eight stops further out that way too (the bracket did not reach the scene's exposure)."""
+    best = min(scored, key=scored.get)
+    want = {best - 2, best - 1, best + 1, best + 2}
+    if best == min(scored):
+        want |= {best - 4, best - 8}
+    if best == max(scored):
+        want |= {best + 4, best + 8}
+    return sorted((o for o in want if o not in scored), reverse=True)
+
+
+def fit_exposure(lab: Lab, name, camera_names, rung_name, rung, look="cinematic", ev0=0.0, first=EXPOSURE_FIRST,
+                 rounds=2, res=(1280, 720), log=print) -> dict:
+    """Bracket the first viewpoint at `rung` (the preview rung: Lumen, seconds per still), one Unreal start per round,
+    and return {"ev": absolute EV for auto_exposure_bias, "offset", "scored": {offset: [badness, stats]}, "seconds"}.
+    "edge" is True when the best offset is still the edge of everything tried."""
+    cams = list(camera_names)[:1]
+    scored, stats, secs = {}, {}, 0.0
+    offs = list(first)
+    for k in range(max(1, rounds)):
+        if not offs:
+            break
+        grades = {"ev_%s%d" % ("p" if o > 0 else "m", abs(o)): {"post": {"auto_exposure_bias": ev0 + o}} for o in offs}
+        out = render_grades(lab, name, cams, rung_name, rung, grades, look=look, res_override=res, label="exposure_%d" % k)
+        secs += out.get("seconds") or 0.0
+        for o in offs:
+            png = out["stills"].get(("ev_%s%d" % ("p" if o > 0 else "m", abs(o)), cams[0]))
+            if png:
+                stats[o] = luma_stats(png)
+                scored[o] = exposure_badness(stats[o])
+        if not scored:
+            return {"ev": ev0, "offset": 0, "scored": {}, "seconds": round(secs, 1), "edge": None,
+                    "why": "no bracket stills: %s" % (out.get("proof") or {}).get("why")}
+        log("  %s exposure round %d: %s" % (name, k + 1, " | ".join("EV%+d med %.2f clip %.0f%%" % (o, stats[o]["median"], 100 * stats[o]["clip"])
+                                                               for o in sorted(stats, reverse=True) if o in offs)))
+        offs = next_offsets(scored)
+    best = min(scored, key=scored.get)
+    return {"ev": ev0 + best, "offset": best, "scored": {o: [round(scored[o], 4), stats[o]] for o in sorted(scored, reverse=True)},
+            "seconds": round(secs, 1), "edge": best in (min(scored), max(scored))}
+
+
 # ---------------------------------------------------------------------- calibration
 def srgb_to_linear(c):
     c = c / 255.0

@@ -33,7 +33,10 @@ def blender_io_checkout(ref, dest, repo=BLENDER_IO_REPO, timeout=600) -> dict:
     dest.mkdir(parents=True, exist_ok=True)
 
     def git(*args):
-        return subprocess.run(["git", "-C", str(dest), *args], capture_output=True, text=True, timeout=timeout)
+        # safe.directory: lab.own() hands this folder to the `ue` user, and git as root then refuses it ("dubious
+        # ownership"), so a second step 7 fell back to the pinned add-on (14 Nov 2026, Colab G4). Scoped to this folder.
+        return subprocess.run(["git", "-c", "safe.directory=%s" % dest.resolve(), "-C", str(dest), *args],
+                              capture_output=True, text=True, timeout=timeout)
     if not (dest / ".git").exists():
         git("init", "-q")
     git("remote", "remove", "origin")

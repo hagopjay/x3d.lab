@@ -182,7 +182,15 @@ def ladder(kind: str, vram_gb: float, hw_rt: bool) -> dict:
                                                                        "r.Lumen.HardwareRayTracing.LightingMode": 2})
     for p in out.values():
         p["texture_streaming"] = "fully_load" if resident else "default"
+        if hw_rt:
+            p["cvars"].update(RT_NANITE)
     return out
+
+
+# Ray tracing (the path tracer, Lumen hit lighting, RT shadows and reflections) traces Nanite's reduced fallback mesh unless
+# told otherwise: the 14 Nov 2026 G4 run (UE 5.8.4) drew X3D Spheres faceted in 4K path-traced stills (Leg 1 had counted
+# 27,560 -> 9,403 fallback triangles), and r.RayTracing.Nanite.Mode 1 drew them round (odyssey White Room, same view).
+RT_NANITE = {"r.RayTracing.Nanite.Mode": 1}
 
 
 def vulkan_decision(kind: str, extensions: list | None, force_hwrt: bool = False) -> dict:
