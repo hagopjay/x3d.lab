@@ -162,7 +162,7 @@ def _light(L, mapping: C.LightMapping, centre, axes, i, model="classic"):
         return None
     rgb = [max(0.0, min(1.0, x)) for x in (L.get("color") or [1, 1, 1])[:3]]
     out = {"name": ue_name(L.get("DEF") or "%s_%d" % (L["type"], i)), "kind": kind, "color": rgb, "on": bool(L.get("on", True)),
-           "x3d_intensity": L["intensity"]}
+           "x3d_intensity": L["intensity"], "shadows": bool(L.get("shadows", False))}   # X3D 4.0 light field, default FALSE
     if kind == "directional":
         out["rotation"] = C.light_dir_to_ue(L["direction"], axes)
         out["location"] = C.to_ue_point(centre, axes)
@@ -249,6 +249,8 @@ def validate_import_job(job: dict) -> None:
 #                bloom_threshold, auto_exposure_bias (EV), vignette_intensity, film_grain_intensity, scene_fringe_intensity,
 #                depth_of_field_fstop, depth_of_field_focal_distance (cm), white_temp, lumen_final_gather_quality
 #   light_scale: multiplies every light the import placed (tag x3dlab_light)
+#   shadows: "x3d" (each light casts only if its X3D shadows field is TRUE; the default of the match look), "on" (every
+#            light casts; the default of the cinematic look), "off"
 #   headlight:   false switches the viewpoint headlights off (the scene's own lights and emissive surfaces only)
 #   cvars:       console variables on top of the rung's (e.g. r.DepthOfFieldQuality 2 to let depth of field show)
 #   aperture:    f-stop of the viewpoint's CineCamera (with focus: depth of field; needs r.DepthOfFieldQuality > 0)
@@ -256,15 +258,26 @@ def validate_import_job(job: dict) -> None:
 POST_KEY = re.compile(r"^[a-z][a-z0-9_]{1,60}$")
 
 
+SHADOW_MODES = ("x3d", "on", "off")
+
+
+def shadow_mode(look: str, grade: dict | None = None) -> str:
+    """Which lights cast shadows in a still: the grade's choice, else "x3d" for the match look (X3D 4.0 lights cast
+    only with shadows TRUE, and X_ITE and Cycles draw none by default) and "on" for the cinematic look (quality)."""
+    return (grade or {}).get("shadows") or ("x3d" if look == "match" else "on")
+
+
 def grade_ok(grade: dict | None) -> dict:
     g = dict(grade or {})
-    unknown = set(g) - {"post", "light_scale", "headlight", "cvars", "name", "aperture", "focus"}
+    unknown = set(g) - {"post", "light_scale", "headlight", "cvars", "name", "aperture", "focus", "shadows"}
     assert not unknown, "unknown grade keys %s" % sorted(unknown)
     for k, v in (g.get("post") or {}).items():
         assert POST_KEY.match(k) and not k.startswith("override_"), k
         assert isinstance(v, (bool, str)) or (isinstance(v, (int, float)) and math.isfinite(v)), (k, v)
     if "light_scale" in g:
         assert isinstance(g["light_scale"], (int, float)) and 0 <= g["light_scale"] <= 1e4
+    if "shadows" in g:
+        assert g["shadows"] in SHADOW_MODES, g["shadows"]
     if "aperture" in g:
         assert isinstance(g["aperture"], (int, float)) and 0.5 <= g["aperture"] <= 64
     if "focus" in g:
@@ -288,7 +301,7 @@ def render_jobs(scene: str, camera_names: list, rung_name: str, rung: dict, out_
                      "cvars": ({"r.DynamicGlobalIlluminationMethod": 0, "r.ReflectionMethod": 0} if look == "match" else {}) | dict(rung["cvars"]),
                      "look": look, "backdrop": "key" if key else "scene", "formats": ["png"] if key else list(formats),
                      "tiles": rung.get("tiles", 1), "warmup": 4 if key else rung.get("warmup_frames", 32),
-                     "texture_streaming": rung.get("texture_streaming", "default")})
+                     "texture_streaming": rung.get("texture_streaming", "default"), "shadows": shadow_mode(look, grade)})
         if grade:
             g = grade_ok(grade)
             jobs[-1]["cvars"] = dict(jobs[-1]["cvars"], **(g.get("cvars") or {}))
@@ -303,6 +316,7 @@ def validate_render_job(spec: dict) -> None:
     for j in spec["jobs"]:
         assert re.match(r"^[A-Za-z0-9_]+$", j["name"]), j["name"]
         assert j["renderer"] in ("lumen", "pathtracer") and j["look"] in ("match", "cinematic")
+        assert j.get("shadows", "x3d") in SHADOW_MODES, j.get("shadows")
         assert 16 <= j["resolution"][0] <= 16384 and 16 <= j["resolution"][1] <= 16384
         assert 1 <= j["spatial"] <= 4096 and 1 <= j["temporal"] <= 4096
         for k, v in j["cvars"].items():

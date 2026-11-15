@@ -85,6 +85,7 @@ def prepare_world(world, job):
     for look in ("match", "cinematic"):
         for v in actors_with_tag(world, "x3dlab_look_" + look):
             attempt("look enable", lambda: v.set_editor_property("enabled", look == job.get("look", "cinematic")))
+    apply_shadows(world, job.get("shadows") or ("x3d" if job.get("look") == "match" else "on"))
     apply_grade(world, job)
     key = job.get("backdrop") == "key"
     for a in actors_with_tag(world, "x3dlab_backdrop"):
@@ -144,6 +145,19 @@ def _camera_focus(world, job, g):
     if "aperture" in g:
         attempt("aperture", lambda: comp.set_editor_property("current_aperture", float(g["aperture"])))
     return round(float(dist), 1)
+
+
+def apply_shadows(world, mode):
+    """"x3d": a light casts only if its X3D shadows field was TRUE (tag x3dlab_shadows); "on": every light; "off": none.
+    Headlights never cast (X3D headlights have no shadows)."""
+    n = 0
+    for a in actors_with_tag(world, "x3dlab_light"):
+        cast = mode == "on" or (mode == "x3d" and "x3dlab_shadows" in [str(t) for t in a.tags])
+        comp = attempt("shadow light comp", lambda: a.get_component_by_class(unreal.LightComponent))
+        if comp is not None:
+            attempt("cast shadows", lambda: comp.set_cast_shadows(cast))
+            n += int(cast)
+    STATE["report"].setdefault("shadows", {})[mode] = n
 
 
 def apply_grade(world, job):

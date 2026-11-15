@@ -153,3 +153,32 @@ def test_render_grades_refuses_colliding_grade_names():
     import pytest
     with pytest.raises(ValueError, match="same Unreal job name"):
         pipeline.render_grades(None, "gob", ["EyeToEye"], "gbx", {}, {"xg+3": {}, "xg-3": {}})
+
+
+# ---------------------------------------------------------------------- X3D shadows (Leg E, 15 Nov)
+from x3due import project, convert as C
+
+
+def test_light_carries_x3d_shadows_field_default_false():
+    m = C.LightMapping()
+    base = {"type": "PointLight", "location": [0, 4.6, 0], "intensity": 12, "attenuation": [0, 0, 1], "radius": 20}
+    off = project._light(dict(base), m, (0, 2.5, 0), C.DEFAULT_AXES, 0)
+    on = project._light(dict(base, shadows=True), m, (0, 2.5, 0), C.DEFAULT_AXES, 1)
+    assert off["shadows"] is False and on["shadows"] is True
+
+
+def test_shadow_mode_per_look_and_grade():
+    assert project.shadow_mode("match") == "x3d"
+    assert project.shadow_mode("cinematic") == "on"
+    assert project.shadow_mode("cinematic", {"shadows": "x3d"}) == "x3d"
+    assert project.grade_ok({"shadows": "off"}) == {"shadows": "off"}
+    jobs = project.render_jobs("e2-cornell", ["Front"], "preview", {"resolution": [64, 36], "spatial_samples": 1, "temporal_samples": 1,
+                               "renderer": "lumen", "cvars": {}}, "/tmp/o", "/tmp/r.json", look="match")["jobs"]
+    assert jobs[0]["shadows"] == "x3d"
+
+
+def test_importer_and_render_apply_shadows():
+    imp = (UNREAL / "ue_scripts" / "x3dlab_import.py").read_text()
+    ren = (UNREAL / "ue_project" / "Content" / "Python" / "x3dlab_render.py").read_text()
+    assert 'setp(comp, "cast_shadows", bool(L.get("shadows", False)))' in imp and '"x3dlab_shadows"' in imp
+    assert "def apply_shadows(world, mode)" in ren and "apply_shadows(world," in ren
