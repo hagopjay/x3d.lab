@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE X3D PUBLIC "ISO//Web3D//DTD X3D 4.0//EN" "https://www.web3d.org/specifications/x3d-4.0.dtd">
+<X3D profile="Interchange" version="4.0" xmlns:xsd="http://www.w3.org/2001/XMLSchema-instance" xsd:noNamespaceSchemaLocation="https://www.web3d.org/specifications/x3d-4.0.xsd">
+<head><component name="Lighting" level="2"/><meta name="title" content="E1 PBR grid"/><meta name="description" content="7x7 PhysicalMaterial spheres: metallic 0..1 left to right, roughness 0..1 bottom to top; one key DirectionalLight, one fill PointLight"/><meta name="creator" content="HagopJay and Claude, x3d.lab G4 experiments, 15 Nov 2026"/></head>
+<Scene>
+<NavigationInfo headlight="false"/>
+<Background skyColor="0.05 0.05 0.06"/>
+<Viewpoint DEF="Front" description="Front" position="0 0 15" fieldOfView="0.7854"/>
+<DirectionalLight global="true" direction="-0.4 -0.5 -0.75" intensity="2.5" color="1 0.97 0.92"/>
+<PointLight global="true" location="6 4 6" intensity="60" attenuation="0 0 1" radius="100" color="0.75 0.85 1"/>
+<Transform translation="0 0 -1.2"><Shape><Appearance><PhysicalMaterial baseColor="0.18 0.18 0.18" metallic="0" roughness="0.6"/></Appearance><Box size="16 16 0.2"/></Shape></Transform>
+<Transform translation="-4.80 -4.80 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.000" roughness="0.000"/></Appearance><Sphere DEF="Ball" radius="0.65"/></Shape></Transform>
+<Transform translation="-4.80 -3.20 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.000" roughness="0.167"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="-4.80 -1.60 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.000" roughness="0.333"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="-4.80 0.00 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.000" roughness="0.500"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="-4.80 1.60 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.000" roughness="0.667"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="-4.80 3.20 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.000" roughness="0.833"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="-4.80 4.80 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.000" roughness="1.000"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="-3.20 -4.80 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.167" roughness="0.000"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="-3.20 -3.20 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.167" roughness="0.167"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="-3.20 -1.60 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.167" roughness="0.333"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="-3.20 0.00 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.167" roughness="0.500"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="-3.20 1.60 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.167" roughness="0.667"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="-3.20 3.20 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.167" roughness="0.833"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="-3.20 4.80 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.167" roughness="1.000"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="-1.60 -4.80 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.333" roughness="0.000"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="-1.60 -3.20 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.333" roughness="0.167"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="-1.60 -1.60 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.333" roughness="0.333"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="-1.60 0.00 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.333" roughness="0.500"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="-1.60 1.60 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.333" roughness="0.667"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="-1.60 3.20 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.333" roughness="0.833"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="-1.60 4.80 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.333" roughness="1.000"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="0.00 -4.80 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.500" roughness="0.000"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="0.00 -3.20 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.500" roughness="0.167"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="0.00 -1.60 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.500" roughness="0.333"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="0.00 0.00 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.500" roughness="0.500"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="0.00 1.60 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.500" roughness="0.667"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="0.00 3.20 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.500" roughness="0.833"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="0.00 4.80 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.500" roughness="1.000"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="1.60 -4.80 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.667" roughness="0.000"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="1.60 -3.20 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.667" roughness="0.167"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="1.60 -1.60 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.667" roughness="0.333"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="1.60 0.00 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.667" roughness="0.500"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="1.60 1.60 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.667" roughness="0.667"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="1.60 3.20 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.667" roughness="0.833"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="1.60 4.80 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.667" roughness="1.000"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="3.20 -4.80 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.833" roughness="0.000"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="3.20 -3.20 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.833" roughness="0.167"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="3.20 -1.60 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.833" roughness="0.333"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="3.20 0.00 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.833" roughness="0.500"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="3.20 1.60 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.833" roughness="0.667"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="3.20 3.20 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.833" roughness="0.833"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="3.20 4.80 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="0.833" roughness="1.000"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="4.80 -4.80 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="1.000" roughness="0.000"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="4.80 -3.20 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="1.000" roughness="0.167"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="4.80 -1.60 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="1.000" roughness="0.333"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="4.80 0.00 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="1.000" roughness="0.500"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="4.80 1.60 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="1.000" roughness="0.667"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="4.80 3.20 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="1.000" roughness="0.833"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+<Transform translation="4.80 4.80 0"><Shape><Appearance><PhysicalMaterial baseColor="0.95 0.64 0.32" metallic="1.000" roughness="1.000"/></Appearance><Sphere USE="Ball"/></Shape></Transform>
+</Scene>
+</X3D>
