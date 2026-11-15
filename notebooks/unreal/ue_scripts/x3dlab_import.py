@@ -272,8 +272,9 @@ def place_lights(lights):
             attempt("outer cone", lambda: comp.set_outer_cone_angle(L["outer_deg"]))
         if not L.get("on", True):
             attempt("visibility", lambda: comp.set_visibility(False))
+        setp(comp, "cast_shadows", bool(L.get("shadows", False)))      # X3D 4.0: a light casts only with shadows TRUE
         label(a, L["name"])
-        tag(a, "x3dlab_light")
+        tag(a, "x3dlab_light", *(["x3dlab_shadows"] if L.get("shadows") else []))
         out.append(L["name"])
     return out
 
