@@ -1,10 +1,11 @@
 # Tier-1 proof run for Unreal 5.8.4 as an X3D endpoint, on a FRESH runtime of x3d.lab main (PRs #29-#31: auto exposure,
 # Nanite ray-tracing mode, grade-name guard, X3D shadows field). Load with:
 #   TBC = open("/content/drive/MyDrive/x3dlab/x3d_tier1_proof_cells.py").read().split("\n# %% ")
-#   def tier(step): exec("#" + next(c for c in TBC[1:] if c.startswith(step)), globals())
-# Order: Runtime > Restart session, then notebook 07 steps 1 and 2, then tier("F0"), then steps 3 -> 12 as normal
-# (step 5 finds the engine already on the local disk), then tier("F1").
+#   def proof(step): exec("#" + next(c for c in TBC[1:] if c.startswith(step)), globals())
+# Order: Runtime > Restart session, then notebook 07 steps 1 and 2, then proof("F0"), then steps 3 -> 12 as normal
+# (step 5 finds the engine already on the local disk), then proof("F1").
 # The bounds in F1 are fixed here, before the numbers exist, so the result can't be tuned to pass.
+# (Do not name the loader `tier`: notebook 07 already has a module called tier, used by steps 3 and 4.)
 
 # %% F0 · the proof run's settings (after step 2, before step 3; 2 s)
 import glob, os
@@ -23,7 +24,7 @@ _rc, LAB_HEAD = git(["-C", str(LAB_DIR), "rev-parse", "--short", "HEAD"])
 _main = all(hasattr(_proj, a) for a in ("SHADOW_MODES", "shadow_mode"))
 print("x3d.lab at %s · %s" % (LAB_HEAD, "includes PR #31 (X3D shadows field)" if _main else "OLD CODE: PR #31 missing, restart the session and rerun step 2"))
 print("proof run: %s · rung %s · look %s · exposure %s · %d viewpoints per scene" % (SCENES, RUNG, LOOK, EXPOSURE, MAX_VIEWPOINTS))
-print("now run steps 3 -> 12 (about 30-45 min on the G4, odyssey is the slow one), then tier(\"F1\")")
+print("now run steps 3 -> 12 (about 30-45 min on the G4, odyssey is the slow one), then proof(\"F1\")")
 
 # %% F1 · Tier-1 proof: the FLIP triangle, the repeat, the bounds (after step 10; about 2-4 min per scene)
 import io, json, sys, subprocess, time

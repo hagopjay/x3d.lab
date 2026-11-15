@@ -60,8 +60,10 @@ Whole-frame FLIP is diluted by the background: E3's object covers 11.7% of the f
 
 **Vulkan from Python (wgpu-py 0.33.0, Vulkan backend):**
 - An FP32 FMA compute shader held 98.1 TFLOPS for 60 s, at 100% utilisation, 541 W peak and 2430 MHz SM clock.
-- The burn's Mandelbulb average (10 fps at 4K, 4 rays per pixel) counted saving the PNGs inside the timer. The frames that saved
-  nothing ran at about 79 fps. `vulkan_encore.py` V2 measures the render alone.
+- The burn's Mandelbulb average (10 fps at 4K, 4 rays per pixel) counted saving the PNGs inside the timer. Measured alone
+  (`vulkan_encore.py` V2): 94.0 fps, 3.12 G rays/s; the same fractal at 7680x4320 with 64 rays per pixel took 0.67 s.
+- All-pairs N-body, 262,144 bodies, 2,400 steps (`vulkan_encore.py` V1): 1.48 x 10^12 pair interactions/s, 29.7 TFLOPS at the
+  customary 20 flops per interaction, 111 s of physics.
 
 ## Named gaps
 

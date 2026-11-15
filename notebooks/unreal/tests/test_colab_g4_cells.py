@@ -43,3 +43,12 @@ def test_leg_e_scenes(path):
     root = ET.parse(path).getroot()
     assert root.tag == "X3D" and root.get("version") == "4.0"
     assert len(root.findall(".//Viewpoint")) == 1
+
+
+def test_loaders_do_not_shadow_notebook_modules():
+    # notebook 07 imports x3due modules by these names; a loader called `tier` broke step 3 on 15 Nov 2026
+    taken = ("tier", "pipeline", "project", "staging", "engines", "compare", "vulkan", "lines")
+    for path in CELL_FILES:
+        src = path.read_text(encoding="utf-8")
+        for name in taken:
+            assert "def %s(" % name not in src, (path.name, name)
