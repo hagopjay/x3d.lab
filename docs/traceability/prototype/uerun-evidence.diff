@@ -1,0 +1,55 @@
+--- a/notebooks/unreal/x3due/uerun.py
++++ b/notebooks/unreal/x3due/uerun.py
+@@ -80,7 +80,16 @@
+     if not text.strip():
+         return {"verdict": "SKIP", "why": "empty log"}
+     lines = text.splitlines()
+-    find = lambda rx: next((m for m in (rx.search(l) for l in lines) if m), None)  # noqa: E731
++
++    def first_hit(rx):
++        """(1-based line number, the line, the match) of the first line rx matches, or None."""
++        for n, l in enumerate(lines, 1):
++            m = rx.search(l)
++            if m:
++                return n, l, m
++        return None
++
++    find = lambda rx: (lambda h: h[2] if h else None)(first_hit(rx))  # noqa: E731
+     dev = find(RX["device_name"])
+     ven = find(RX["vendor"])
+     sp = find(RX["shader_platform"])
+@@ -98,6 +107,13 @@
+         if hit:
+             crashes.append({"signature": name, "line": hit.strip()[:300], "advice": advice})
+     d["crashes"] = crashes
++    # Where each value came from: the log line (1-based number and text) the regex took it from. A claim about this
++    # value can then be checked by quote (x3dlab.receipt); "verified" says the line holds the value, not that it is
++    # the right line.
++    d["evidence"] = {k: {"line": h[0], "text": h[1].strip()[:400]}
++                     for k, rx in (("device", "device_name"), ("vendor_id", "vendor"), ("api", "api"), ("driver", "driver"),
++                                   ("shader_platform", "shader_platform"), ("engine_version", "engine_version"))
++                     for h in [first_hit(RX[rx])] if h}
+     nvidia = d["vendor_id"] == "0x10de" or (d["device"] and "nvidia" in d["device"].lower())
+     if d["null_rhi"] and not d["vulkan"]:
+         d["verdict"], d["why"] = "FAIL", "NullRHI: nothing was rendered on a GPU"
+@@ -114,6 +130,20 @@
+     return d
+ 
+ 
++WROTE = re.compile(r"X3DLAB: wrote (\S+) \((\d+) files?, ([\d.]+) s\)")
++
++
++def wrote_lines(text: str) -> list:
++    """The lab's own `X3DLAB: wrote <job> (<n> files, <s> s)` lines (x3dlab_render.py:326): one per still, with the
++    number of the line, so a still's `seconds` can be tied to the log line that reported it."""
++    out = []
++    for n, l in enumerate(text.splitlines(), 1):
++        m = WROTE.search(l)
++        if m:
++            out.append({"job": m.group(1), "files": int(m.group(2)), "seconds": float(m.group(3)), "line": n, "text": l.strip()[:400]})
++    return out
++
++
+ def excerpt(text: str, n: int = 60) -> str:
+     """The lines worth reading when something failed: RHI/Vulkan/Init/errors, plus the last lines."""
+     lines = text.splitlines()

@@ -101,3 +101,5 @@ python tools/build_notebooks.py                       # notebooks/src/*.py -> no
 Edit notebooks in `notebooks/src/` (percent format, diff-friendly); the `.ipynb` files are generated. CI runs the tests and fails if a notebook is out of date. In a notebook, `X3DLAB_DEV=1` skips the pip install so a local checkout is used.
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for what comes next.
+
+For tying every number in a run card to the log line it came from, see [docs/TRACEABILITY.md](docs/TRACEABILITY.md) (a plan and a tested prototype, not yet wired in).
