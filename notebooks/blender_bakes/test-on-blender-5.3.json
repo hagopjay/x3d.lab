@@ -1,0 +1,60 @@
+{
+ "what": "Quick-profile run of the four bake jobs from giza_bakes_g4.ipynb build 18751c82, sources unchanged",
+ "blender": "5.3.0 (bpy wheel, Linux, headless)",
+ "addon": "x3d-blender-io 8e56437 (main, 23 Nov 2026)",
+ "device": "CPU, 4 cores (no GPU here: OptiX and CUDA paths NOT tested)",
+ "validator": "x3d_mcp fork 4d433af (XSD 4.0 + semantic)",
+ "profile_g4": "NOT tested",
+ "jobs": {
+  "crawl": {
+   "exit": 0,
+   "baked_surfaces": 45,
+   "x3d": "crawl.x3d",
+   "bytes": 6184908,
+   "sha256": "4047fb49e062e1eba4ebf65f65761f586b196ade2372e8ac2e3c0e3ca6f82433",
+   "valid": true,
+   "schema_errors": 0,
+   "tracebacks": 0,
+   "deprecation_warnings": [
+    "'World.use_nodes' is expected to be removed in Blender 6.0"
+   ]
+  },
+  "masonic": {
+   "exit": 0,
+   "baked_surfaces": 15,
+   "x3d": "giza-lodge.x3d",
+   "bytes": 373751,
+   "sha256": "fd14e75df1f63c582be4eae2107896653f83ffe933703c970b2afeffa1ebffc9",
+   "valid": true,
+   "schema_errors": 0,
+   "tracebacks": 0,
+   "deprecation_warnings": [
+    "'World.use_nodes' is expected to be removed in Blender 6.0"
+   ]
+  },
+  "fall": {
+   "exit": 0,
+   "baked_surfaces": 11,
+   "x3d": "fall.x3d",
+   "bytes": 1403498,
+   "sha256": "8f52d5fbec62c3b51604359e16ab0e82e18fd7974d83b0db18fc862b424e9804",
+   "valid": true,
+   "schema_errors": 0,
+   "tracebacks": 0,
+   "deprecation_warnings": []
+  },
+  "twins": {
+   "exit": 0,
+   "baked_surfaces": 5,
+   "x3d": "heritage-context.x3d",
+   "bytes": 229811,
+   "sha256": "03ebe94a247b043644e2fe055795f28ab67f0bdd72e6c2c7da9c84ce8ef0fc0c",
+   "valid": true,
+   "schema_errors": 0,
+   "tracebacks": 0,
+   "deprecation_warnings": [
+    "'World.use_nodes' is expected to be removed in Blender 6.0"
+   ]
+  }
+ }
+}
