@@ -1,0 +1,12 @@
+{
+  "name": "io.x3d.unity",
+  "displayName": "X3D Bridge for Unity",
+  "version": "0.1.0",
+  "unity": "2022.3",
+  "unityRelease": "0f1",
+  "description": "Import, play, live-link and export X3D in Unity, with a receipt that names every node it did not draw. Built for the Gobbler. Target: iOS, Android, Quest (OpenXR), visionOS.",
+  "keywords": ["x3d", "xr", "ar", "gobbler", "openxr", "arfoundation"],
+  "license": "MIT",
+  "dependencies": {},
+  "samples": [{ "displayName": "hello-xr", "description": "Smoke scene: DEF/USE, ROUTE animation, indexed geometry, point cloud", "path": "Samples~/hello-xr" }]
+}

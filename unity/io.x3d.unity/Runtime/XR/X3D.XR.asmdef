@@ -1,0 +1,11 @@
+{
+  "name": "X3D.XR",
+  "rootNamespace": "X3D.UnityBridge.XR",
+  "references": ["X3D.Core", "X3D.Unity", "Unity.XR.ARFoundation", "Unity.XR.ARSubsystems", "Unity.InputSystem"],
+  "includePlatforms": [],
+  "autoReferenced": true,
+  "defineConstraints": ["X3D_ARFOUNDATION"],
+  "versionDefines": [
+    { "name": "com.unity.xr.arfoundation", "expression": "5.0.0", "define": "X3D_ARFOUNDATION" }
+  ]
+}

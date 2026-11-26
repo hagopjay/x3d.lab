@@ -1,0 +1,11 @@
+{
+  "name": "X3D.Unity",
+  "rootNamespace": "X3D.UnityBridge",
+  "references": ["X3D.Core"],
+  "includePlatforms": [],
+  "autoReferenced": true,
+  "versionDefines": [
+    { "name": "com.unity.render-pipelines.universal", "expression": "", "define": "X3D_URP" },
+    { "name": "com.unity.visualeffectgraph", "expression": "", "define": "X3D_VFX" }
+  ]
+}

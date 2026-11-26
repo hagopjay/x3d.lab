@@ -1,0 +1,6 @@
+{
+  "name": "X3D.Core",
+  "rootNamespace": "X3D.Core",
+  "noEngineReferences": true,
+  "autoReferenced": true
+}
