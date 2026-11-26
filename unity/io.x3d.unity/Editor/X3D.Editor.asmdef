@@ -1,0 +1,7 @@
+{
+  "name": "X3D.Editor",
+  "rootNamespace": "X3D.UnityBridge.Editor",
+  "references": ["X3D.Core", "X3D.Unity"],
+  "includePlatforms": ["Editor"],
+  "autoReferenced": true
+}
